@@ -1,6 +1,6 @@
-import { refreshAllCardsBmBanner } from '../dmr/bm-banner.js?v=2.9.496';
-import { currentBmStatus, updateBmStatus } from '../dmr/bm-status.js';
-import { renderHotspotsList } from '../dmr/hotspots.js?v=2.9.560';
+import { refreshAllCardsBmBanner } from '../dmr/bm-banner.js?v=2.9.590';
+import { currentBmStatus, updateBmStatus } from '../dmr/bm-status.js?v=2.9.624';
+import { renderHotspotsList } from '../dmr/hotspots.js?v=2.9.628';
 
 /**
  * Language Selector & i18n Localization Engine Module
@@ -111,7 +111,7 @@ export function initLanguageManager() {
         window.renderSlotList(1);
         window.renderSlotList(2);
       }
-      if (typeof window.updateDsdfmePresetUI === "function") window.updateDsdfmePresetUI();
+      if (typeof window.updateAudioRxPresetUI === "function") window.updateAudioRxPresetUI();
       if (typeof window.updateAudioPresetUI === "function") window.updateAudioPresetUI();
       if (typeof refreshAllCardsBmBanner === "function") refreshAllCardsBmBanner();
       if (typeof window.updateGwStatus === "function") {

@@ -14,9 +14,9 @@ import {
   calculateClientPacketLoss,
   calculateCardPacketLoss,
   updatePingElement
-} from "../network/ping-sparklines.js?v=2.9.495";
+} from "../network/ping-sparklines.js?v=2.9.594";
 import { openBmBenchmarkModal } from "./bm-benchmark.js";
-import { isHotspotCollapsed, isHotspotLiveCollapsed } from "../audio/volume-mute.js";
+import { isHotspotCollapsed, isHotspotLiveCollapsed } from "../audio/volume-mute.js?v=2.9.622";
 import { isoToEmoji, getLocalizedCountryName } from "../core/formatters.js?v=2.9.367";
 
 export const KNOWN_BM_MASTERS = [
@@ -225,7 +225,10 @@ export const KNOWN_ALLSTAR_SERVERS = [
 ];
 
 export function getDmrNetworkProfile(netType) {
-  const key = String(netType || "bm").trim().toLowerCase();
+  let key = String(netType || "bm").trim().toLowerCase();
+  if (key === "asl" || key === "iax" || key === "allstarlink") {
+    key = "allstar";
+  }
   return DMR_NETWORK_PROFILES[key] || DMR_NETWORK_PROFILES.bm;
 }
 
@@ -735,7 +738,7 @@ export function updateCardBmBanner(card, hs) {
     const actNode = (hs && (hs.connected_node || hs._active_asl_node || hs._last_asl_node)) || "";
     hostVal = (actNode && String(actNode).trim() !== "1999" && String(actNode).trim() !== "0")
       ? `asl_node_${actNode}`
-      : "www.allstarlink.org";
+      : "";
   }
   const info = getBmServerInfo(hostVal, netType);
 
@@ -786,7 +789,8 @@ export function updateCardBmBanner(card, hs) {
 
   const modeBadge = banner.querySelector(".bm-ping-mode-badge");
   if (modeBadge && !modeBadge.classList.contains("mode-client")) {
-    modeBadge.textContent = profile.shortLabel;
+    const isAsl = Boolean(profile.id === "allstar");
+    modeBadge.textContent = isAsl ? "HUB/Node" : profile.shortLabel;
     modeBadge.className = `bm-ping-mode-badge mode-server net-mode-${profile.id} mode-${profile.id === "bm" ? "bm" : profile.id}`;
     modeBadge.dataset.networkType = profile.id;
     modeBadge.title = ((typeof window !== "undefined" && window.t)
@@ -1012,15 +1016,15 @@ export function updateCardBmBanner(card, hs) {
       const clientLossData = calculateClientPacketLoss(cid);
       updatePingElement(pingEl, isWsOpen ? clientPing : null, clientLossData, "client", profile.shortLabel);
     } else {
-      const isOfflineCard = isCollapsed || (!isOnline && !isPrimary);
-      const lossData = isOfflineCard ? { lossPercent: 0, isOffline: true } : calculateCardPacketLoss(cid, hostVal);
+      const isAslNoNode = (profile.id === "allstar" && !hostVal);
+      const isOfflineCard = isCollapsed || (!isOnline && !isPrimary) || isAslNoNode;
+      const lossData = isOfflineCard ? { lossPercent: 0, isOffline: false } : calculateCardPacketLoss(cid, hostVal);
       updatePingElement(pingEl, isOfflineCard ? null : pingMs, lossData, "server", profile.shortLabel);
-      if (profile.id === "allstar" && !isOfflineCard) {
+      if (profile.id === "allstar") {
         const targetNode = (hs && (hs.connected_node || hs._last_asl_node || hs._active_asl_node)) || "";
-        const nodeStr = (targetNode && String(targetNode).trim() !== "1999" && String(targetNode).trim() !== "0")
-          ? `Node #${targetNode}`
-          : "www.allstarlink.org";
-        pingEl.title = `ASL ↔ ${nodeStr} (${pingMs !== null ? pingMs + " ms" : "--"}). Клик для смены режима`;
+        const isConnected = Boolean(targetNode && String(targetNode).trim() !== "1999" && String(targetNode).trim() !== "0");
+        const nodeStr = isConnected ? `Node #${targetNode}` : "* disconnect *";
+        pingEl.title = `HUB/Node: ${nodeStr} (${pingMs !== null ? pingMs + " ms" : "--"}). Клик для смены режима`;
       }
     }
   }

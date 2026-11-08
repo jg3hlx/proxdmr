@@ -18,11 +18,11 @@ import {
   setVolumeDownPttEnabled,
   setHotspotVolumeSyncEnabled,
   setSystemVolumeSyncEnabled
-} from "../audio/volume-mute.js";
+} from "../audio/volume-mute.js?v=2.9.622";
 import {
   isCheckMicOnTxEnabled,
   setCheckMicOnTxEnabled
-} from "../ptt/engine.js?v=2.9.367";
+} from "../ptt/engine.js?v=2.9.628";
 import { setHapticEnabled, setHapticDuration } from "../core/haptic.js";
 
 export function initGeneralSettings() {

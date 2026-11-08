@@ -205,6 +205,28 @@ MESSAGES = {
         "host_disk_title": "💽 Spazio su disco quasi esaurito",
         "host_disk_body": "La partizione dati è piena al {pct}% ({free_gb} GB liberi).",
     },
+    "nl": {
+        "test_title": "🧪 Testmelding",
+        "test_body": "De Watchdog-service en Telegram-integratie functioneren naar behoren.",
+        "offline_title": "🔴 ProxDMR Niet Beschikbaar (Offline)",
+        "offline_body": "De ProxDMR-container reageert niet en heartbeat is gestopt gedurende >{sec} s.",
+        "restart_title": "🔄 Herstart van ProxDMR",
+        "restart_body": "Herstart van ProxDMR-proces gedetecteerd (nieuw gestart om: {started_at}).",
+        "oom_title": "💥 ProxDMR OOM Crash",
+        "oom_body": "ProxDMR is gecrasht wegens geheugentekort (limiet van {limit} MB bereikt).",
+        "hang_title": "⏳ ProxDMR Event Loop Vastgelopen",
+        "hang_body": "HTTP-API reageert niet gedurende >{sec} s. Mogelijk is de event loop geblokkeerd.",
+        "cmem_title": "⚠️ Hoog geheugengebruik container",
+        "cmem_body": "Geheugen van ProxDMR heeft {rss} MB bereikt ({pct}% van limiet {limit} MB).",
+        "leak_title": "📈 Vermoeden van geheugenlek",
+        "leak_body": "RSS-groei afgelopen uur: +{growth} MB. Huidige waarde: {rss} MB.",
+        "host_ram_title": "🖥 Hoge belasting host-RAM",
+        "host_ram_body": "RAM-gebruik van de host heeft {pct}% bereikt ({used} MB van {total} MB).",
+        "host_swap_title": "💾 Hoog swap-gebruik host",
+        "host_swap_body": "Swap-gebruik van de host heeft {pct}% bereikt ({used} MB van {total} MB).",
+        "host_disk_title": "💽 Host-schijf bijna vol",
+        "host_disk_body": "Gegevenspartitie is voor {pct}% bezet ({free_gb} GB vrij).",
+    },
 }
 
 

@@ -350,7 +350,9 @@ export function initAboutModal() {
 
   document.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
-    const logoTarget = e.target.closest(".brand-logo-wrap, .brand-title");
+    const logoTarget = (e.target && typeof e.target.closest === "function")
+      ? e.target.closest(".brand-logo-wrap, .brand-title")
+      : null;
     if (!logoTarget) return;
 
     // Check if target is inside a hotspot card
@@ -400,7 +402,9 @@ export function initAboutModal() {
 
   document.addEventListener("pointerup", (e) => {
     if (logoLongPressTriggered) {
-      const logoTarget = e.target.closest(".brand-logo-wrap, .brand-title");
+      const logoTarget = (e.target && typeof e.target.closest === "function")
+      ? e.target.closest(".brand-logo-wrap, .brand-title")
+      : null;
       if (logoTarget) {
         e.preventDefault();
         e.stopPropagation();
@@ -414,7 +418,9 @@ export function initAboutModal() {
   });
 
   document.addEventListener("contextmenu", (e) => {
-    const logoTarget = e.target.closest(".brand-logo-wrap, .brand-title");
+    const logoTarget = (e.target && typeof e.target.closest === "function")
+      ? e.target.closest(".brand-logo-wrap, .brand-title")
+      : null;
     if (logoTarget && (logoLongPressTriggered || logoLongPressTimer)) {
       e.preventDefault();
       cancelLogoLongPress();

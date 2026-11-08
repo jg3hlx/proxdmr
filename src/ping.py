@@ -303,37 +303,61 @@ class BMPingService:
             return
 
         host_to_hids: Dict[str, List[str]] = {}
+        asl_direct_results: Dict[str, Dict[str, Any]] = {}
         for i, hs in enumerate(hotspots):
-            hid = hs.get("id") if isinstance(hs, dict) else getattr(hs, "id", None)
             status = hs.get("status") if isinstance(hs, dict) else getattr(hs, "status", None)
-            is_primary = hs.get("is_primary", False) if isinstance(hs, dict) else (i == 0)
+            is_primary = hs.get("is_primary") if isinstance(hs, dict) else getattr(hs, "is_primary", False)
+            hid = hs.get("id") if isinstance(hs, dict) else getattr(hs, "id", None)
             if not hid:
                 hid = "default"
 
             net_type = str(hs.get("network_type") if isinstance(hs, dict) else getattr(getattr(hs, "config", hs), "network_type", "bm") or "bm").strip().lower()
             if net_type == "allstar":
-                # Для AllStarLink: пингуем текущий соединенный ХН, либо www.allstarlink.org в простое
+                # Для AllStarLink: пингуем ТОЛЬКО удаленный соединенный узел/хаб.
+                # В простое или без активного соединения сайт allstarlink.org НЕ пингуем!
                 target_node = hs.get("connected_node") or hs.get("_active_asl_node") or hs.get("_last_asl_node")
                 if not target_node and isinstance(hs.get("asl_links"), list) and hs.get("asl_links"):
                     target_node = hs.get("asl_links")[0].get("node")
 
+                target_node_str = str(target_node).strip() if target_node else ""
                 asl_host = None
-                if target_node and str(target_node).strip() not in ("0", "1999", "9998", "9999"):
+                asl_rtt = None
+                asl_loss = 0.0
+
+                if target_node_str and target_node_str not in ("0", "1999", "9998", "9999"):
                     try:
                         from asl_container_manager import asl_container_mgr
                         uid = str(hs.get("user_id") or 1)
                         own_n = str(hs.get("allstar_node") or "1999")
-                        asl_host = asl_container_mgr.lookup_node_ip(uid, own_n, str(target_node).strip())
+                        # 1. Запрос живого UDP VoIP RTT и netstats из Asterisk (IAX2 netstats)
+                        netstats = asl_container_mgr.get_node_netstats(uid, own_n)
+                        node_stat = netstats.get(target_node_str) if isinstance(netstats, dict) else None
+                        if node_stat and node_stat.get("rtt") is not None:
+                            asl_rtt = round(float(node_stat["rtt"]))
+                            asl_loss = float(node_stat.get("loss_pct", 0.0))
+                        asl_host = asl_container_mgr.lookup_node_ip(uid, own_n, target_node_str)
                     except Exception:
                         pass
 
-                if not asl_host:
-                    asl_host = "www.allstarlink.org"
+                if asl_rtt is not None:
+                    # Живой IAX2 RTT получен напрямую из Asterisk (ICMP не шлем, т.к. узлы его дропают)
+                    asl_direct_results[hid] = {
+                        "rtt": asl_rtt,
+                        "loss": asl_loss,
+                        "node": target_node_str,
+                        "ip": asl_host
+                    }
+                    continue
+
                 host = asl_host
             else:
                 host = hs.get("bm_master_host") if isinstance(hs, dict) else getattr(getattr(hs, "config", hs), "bm_master_host", None)
                 if not host:
                     host = "2322.master.brandmeister.network"
+
+            # Если хост не определен (например, ASL в простое), не добавляем в задачи пинга
+            if not host:
+                continue
 
             # Primary (first) hotspot is pinged 24/7 continuously even when OFFLINE / disconnected
             if is_primary or i == 0:
@@ -375,6 +399,27 @@ class BMPingService:
             for hid in host_to_hids[host]:
                 new_pings[hid] = rtt
                 new_losses[hid] = rolling_loss
+
+        # Запись прямых результатов AllStarLink (полученных из IAX2 netstats Asterisk)
+        for hid, asl_data in asl_direct_results.items():
+            rtt = asl_data["rtt"]
+            loss_pct = asl_data["loss"]
+            node_key = f"asl_node_{asl_data['node']}"
+            ip_host = asl_data.get("ip")
+
+            new_pings[hid] = rtt
+            new_losses[hid] = loss_pct
+
+            new_host_pings[node_key] = rtt
+            new_host_losses[node_key] = loss_pct
+            self.history[node_key].append((now_ts, rtt))
+            self.loss_history[node_key].append((now_ts, loss_pct))
+
+            if ip_host:
+                new_host_pings[ip_host] = rtt
+                new_host_losses[ip_host] = loss_pct
+                self.history[ip_host].append((now_ts, rtt))
+                self.loss_history[ip_host].append((now_ts, loss_pct))
 
         # For inactive secondary hotspots, explicitly set ping and loss to None
         for i, hs in enumerate(hotspots):
@@ -436,8 +481,11 @@ class BMPingService:
             self._benchmark_cancel_event.set()
             logger.info("[PING] BM Benchmark cancellation requested.")
 
-    async def start_benchmark(self, servers: List[Dict[str, Any]]) -> bool:
+    async def start_benchmark(self, servers: List[Dict[str, Any]], silent: bool = False) -> bool:
         if self.is_benchmark_running():
+            if silent:
+                logger.info("[PING] Benchmark already running, skipping silent startup benchmark.")
+                return False
             logger.warning("[PING] Benchmark already running, cancelling previous...")
             self.cancel_benchmark()
             try:
@@ -446,7 +494,7 @@ class BMPingService:
                 pass
 
         self._benchmark_cancel_event.clear()
-        self._benchmark_task = asyncio.create_task(self._run_benchmark_task(servers))
+        self._benchmark_task = asyncio.create_task(self._run_benchmark_task(servers, silent=silent))
         return True
 
     @staticmethod
@@ -481,9 +529,9 @@ class BMPingService:
 
         return result
 
-    async def _run_benchmark_task(self, servers: List[Dict[str, Any]]):
+    async def _run_benchmark_task(self, servers: List[Dict[str, Any]], silent: bool = False):
         total = len(servers)
-        logger.info(f"[PING] Starting BM Benchmark for {total} servers...")
+        logger.info(f"[PING] Starting BM Benchmark for {total} servers (silent={silent})...")
         tested_results: List[Dict[str, Any]] = []
 
         for idx, srv in enumerate(servers):
@@ -508,7 +556,7 @@ class BMPingService:
                 "name": display_name,
             }
 
-            if self.broadcast:
+            if self.broadcast and not silent:
                 try:
                     await self.broadcast({
                         "type": "bm_benchmark_progress",
@@ -577,10 +625,10 @@ class BMPingService:
             probe_stats = await asyncio.to_thread(
                 _benchmark_probe_worker,
                 ip,
-                max_packets=10,
-                max_duration=7.0,
+                max_packets=4 if silent else 10,
+                max_duration=2.5 if silent else 7.0,
                 cancel_check=self._benchmark_cancel_event.is_set,
-                packet_callback=_on_packet
+                packet_callback=None if silent else _on_packet
             )
 
             # Additional UDP handshake probe (3 packets) to verify master is listening
@@ -594,8 +642,8 @@ class BMPingService:
                     host,
                     int(srv.get("port") or 62031),
                     123456799,
-                    3,
-                    1.0,
+                    2 if silent else 3,
+                    0.8 if silent else 1.0,
                     self._benchmark_cancel_event.is_set,
                     "bm",
                     False
@@ -606,6 +654,10 @@ class BMPingService:
             except Exception:
                 pass
 
+            effective_avg = probe_stats["avg_ping"]
+            if effective_avg is None and udp_ms is not None:
+                effective_avg = int(round(udp_ms))
+
             res_item = {
                 "id": srv_id,
                 "country_code": c_code,
@@ -613,19 +665,19 @@ class BMPingService:
                 "flag": flag,
                 "host": host,
                 "name": display_name,
-                "avg_ping": probe_stats["avg_ping"],
+                "avg_ping": effective_avg,
                 "udp_ms": udp_ms,
                 "udp_ok": udp_ok,
-                "state": udp_state if udp_state else ("online" if probe_stats["avg_ping"] is not None else "no_reply"),
-                "loss_pct": probe_stats["loss_pct"],
+                "state": udp_state if udp_state else ("online" if effective_avg is not None else "no_reply"),
+                "loss_pct": probe_stats["loss_pct"] if probe_stats["avg_ping"] is not None else (0.0 if udp_ok else 100.0),
                 "packets_sent": probe_stats["packets_sent"],
                 "packets_recv": probe_stats["packets_recv"],
-                "status": probe_stats["status"]
+                "status": "ok" if (udp_ok or effective_avg is not None) else probe_stats["status"]
             }
             tested_results.append(res_item)
 
-            if probe_stats["avg_ping"] is not None:
-                self.cached_host_pings[host] = probe_stats["avg_ping"]
+            if effective_avg is not None:
+                self.cached_host_pings[host] = effective_avg
 
             await asyncio.sleep(0.04)
 
@@ -649,9 +701,9 @@ class BMPingService:
             logger.debug(f"[PING] Error syncing BM benchmark to server_probe cache: {e}")
 
         is_cancelled = self._benchmark_cancel_event.is_set()
-        logger.info(f"[PING] BM Benchmark completed (tested {len(tested_results)}/{total}, cancelled={is_cancelled})")
+        logger.info(f"[PING] BM Benchmark completed (tested {len(tested_results)}/{total}, cancelled={is_cancelled}, silent={silent})")
 
-        if self.broadcast:
+        if self.broadcast and not silent:
             try:
                 await self.broadcast({
                     "type": "bm_benchmark_complete",

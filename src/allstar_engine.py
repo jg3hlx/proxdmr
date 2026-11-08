@@ -20,6 +20,7 @@ import math
 import struct
 import time
 from typing import Callable, Optional, Dict, Any
+import numpy as np
 
 logger = logging.getLogger("proxdmr.allstar")
 
@@ -309,6 +310,7 @@ class AllStarClient:
         self.voice_frames_count: int = 0          # Number of 20ms voiced frames in current call
         self.total_rx_frames_count: int = 0
         self._consecutive_voice_frames: int = 0   # Require >=2 consecutive voice frames (40ms) to open carrier
+        self._preroll_frame: Optional[tuple] = None
         self._zcr_samples: list = []
         self._rms_samples: list = []
         self.on_link_telemetry: Optional[Callable[[str], None]] = None
@@ -656,19 +658,32 @@ class AllStarClient:
             self.voice_frames_count += 1
             self._consecutive_voice_frames += 1
             self._analyze_frame_acoustics(pcm16, rms)
+            norm_rms = min(1.0, rms * 2.5)
 
-            # Open carrier only after >=2 consecutive voice frames (40 ms),
-            # preventing short line clicks/squelch bursts from creating false calls
-            if not self.is_rx and self._consecutive_voice_frames >= 2:
-                self._update_carrier(True)
+            if not self.is_rx:
+                if self._consecutive_voice_frames == 1:
+                    # Hold the first 20ms voiced frame in pre-roll buffer:
+                    # prevents single-frame noise clicks from polluting accumulator while preserving 100% of speech onset
+                    self._preroll_frame = (pcm16, norm_rms)
+                    return
+                elif self._consecutive_voice_frames >= 2:
+                    self._update_carrier(True)
+                    if self._preroll_frame and self.on_rx_audio:
+                        pre_pcm, pre_rms = self._preroll_frame
+                        self._preroll_frame = None
+                        try:
+                            self.on_rx_audio(pre_pcm, pre_rms)
+                        except Exception as e:
+                            logger.debug(f"[ALLSTAR] on_rx_audio preroll callback error: {e}")
 
             if self.on_rx_audio:
                 try:
-                    self.on_rx_audio(pcm16, min(1.0, rms * 2.5))
+                    self.on_rx_audio(pcm16, norm_rms)
                 except Exception as e:
                     logger.debug(f"[ALLSTAR] on_rx_audio callback error: {e}")
         else:
             self._consecutive_voice_frames = 0
+            self._preroll_frame = None
             if self.is_rx:
                 explicit_unkey = (not self._remote_radio_keyed) and (self._last_unkey_time > self.last_voice_time)
                 hang_time = self.vad_hang_time_unkeyed if explicit_unkey else self.vad_hang_time_keyed
@@ -729,6 +744,16 @@ class AllStarClient:
                 subclass = ord(ch.upper())
                 logger.info(f"[ALLSTAR] Sending DTMF key: '{ch.upper()}'")
                 self._send_full(IAX_TYPE_DTMF, subclass, inc_oseq=True)
+
+    def send_text(self, text: str):
+        """Sends an IAX_TYPE_TEXT frame (e.g. 'K? * <callsign> 0 0' key query) to app_rpt."""
+        if self.state != "ACTIVE" or not self._transport or not text:
+            return
+        try:
+            payload = text.encode("utf-8", errors="ignore") + b"\x00"
+            self._send_full(IAX_TYPE_TEXT, 0, payload, inc_oseq=True)
+        except Exception as e:
+            logger.debug(f"[ALLSTAR] send_text error: {e}")
 
     async def _ping_loop(self):
         """Sends keep-alive PING frames to prevent NAT timeouts and measure RTT."""
@@ -806,35 +831,234 @@ class AllStarClientAdapter:
         self._netstats_poll_in_flight: bool = False
         self._dtmf_macro_in_progress: bool = False
         self._dtmf_macro_lock: asyncio.Lock = asyncio.Lock()
+        self._last_l_telemetry_raw: str = ""
+        self._last_l_telemetry_ts: float = 0.0
+        self._live_keyed_participants: Dict[str, float] = {}
+        self._in_call_split: bool = False
+        self._last_tx_stop_ts: float = 0.0
 
     def _on_asl_link_telemetry(self, text: str):
         """
         Parses link telemetry text frames from app_rpt.
-        NOTE: Standard 'L R2560,R2462,TN0CALL' frames represent RPT_LINKS where R/T is link mode
+        NOTE: Standard 'L R2560,R2462,TW1AW' frames represent RPT_LINKS where R/T is link mode
         (Receive vs Transceive), NOT keyed state! Only explicit 'K' tokens indicate keying.
+        Also parses app_rpt key-query responses: 'K <dest> <node_id> <1_or_0> <seconds>'.
         """
         try:
             if not text:
                 return
-            # Match only explicit Keyed tokens: e.g. '2462TK', '2462RK', or 'K2462'
-            keyed_matches = re.findall(r'\b(\d{4,7})[TRCtrc]K\b|\bK(\d{4,7})\b', text)
-            keyed_nodes = [m[0] or m[1] for m in keyed_matches if (m[0] or m[1])]
+            clean_txt = text.strip()
+            now_mono = time.monotonic()
+            rt_telemetry = self.manager.get_runtime(self.user_id, self.hotspot_id)
+            own_n = str(getattr(rt_telemetry.config, "allstar_node", "1999") if rt_telemetry else self.client.node).strip()
+
+            # 1. Check app_rpt key-query response frame: 'K <dest_call> <src_node> <keyed_0_or_1> <sec>'
+            m_kresp = re.match(r"^K\s+\S+\s+(\d{4,7})\s+([01])\s+(\d+)", clean_txt)
+            if m_kresp:
+                k_node = m_kresp.group(1).strip()
+                k_flag = m_kresp.group(2) == "1"
+                if k_node == own_n:
+                    self._live_keyed_participants.pop(k_node, None)
+                    return
+                if k_flag:
+                    self._live_keyed_participants[k_node] = now_mono
+                else:
+                    self._live_keyed_participants.pop(k_node, None)
+
+                if rt_telemetry is not None and self.client.is_rx:
+                    active_k_list = [
+                        n for n, ts in list(self._live_keyed_participants.items())
+                        if (now_mono - ts) < 8.0 and n != own_n
+                    ]
+                    prev_hub = getattr(rt_telemetry, "asl_hub_nodes", None) or []
+                    if prev_hub:
+                        k_set_now = set(active_k_list)
+                        for item in prev_hub:
+                            n_id = str(item.get("node", "")).strip()
+                            item["keyed"] = (n_id in k_set_now)
+                        self.manager._notify_async({
+                            "type": "allstar_hub_telemetry",
+                            "hotspot_id": self.hotspot_id,
+                            "hub_nodes": prev_hub,
+                            "keyed_nodes": active_k_list,
+                            "active_node": active_k_list[0] if active_k_list else (self._active_asl_node or ""),
+                            "user_id": self.user_id,
+                        }, user_id=self.user_id)
+                return
+
+            # Prune expired live keyed participants (> 8s) and own local node
+            for k_old, ts_old in list(self._live_keyed_participants.items()):
+                if (now_mono - ts_old) >= 8.0 or k_old == own_n:
+                    self._live_keyed_participants.pop(k_old, None)
+
+            # Match explicit Keyed tokens: e.g. '2462TK', '2462RK', or 'K2462' (excluding own local node)
+            keyed_matches = re.findall(r'\b(\d{4,7})[TRCtrc]K\b|\bK(\d{4,7})\b', clean_txt)
+            keyed_nodes = [
+                (m[0] or m[1]) for m in keyed_matches
+                if (m[0] or m[1]) and str(m[0] or m[1]).strip() != own_n
+            ]
+            for k_live in self._live_keyed_participants.keys():
+                if k_live != own_n and k_live not in keyed_nodes:
+                    keyed_nodes.insert(0, k_live)
+
             if keyed_nodes:
                 self.client._remote_radio_keyed = True
                 new_node = str(keyed_nodes[0]).strip()
+                primary_hub = str(getattr(rt_telemetry, "connected_node", "") or "").strip() if rt_telemetry else ""
                 if (
                     self.client.is_rx
                     and new_node
+                    and new_node != own_n
                     and self._active_asl_node
                     and str(new_node) != str(self._active_asl_node)
+                    and str(new_node) != primary_hub
                 ):
-                    self._split_call_on_node_change(new_node)
+                    if str(self._active_asl_node) == primary_hub:
+                        self._resolve_active_caller_in_place(new_node)
+                    else:
+                        self._split_call_on_node_change(new_node)
+
+            # Parse full RPT_LINKS list from 'L ...' text frame for live Node Dashboard
+            if clean_txt.startswith("L ") or clean_txt.startswith("L\t"):
+                raw_list = clean_txt[2:].strip()
+                if raw_list:
+                    now_mono = time.monotonic()
+                    if raw_list == self._last_l_telemetry_raw and (now_mono - self._last_l_telemetry_ts) < 2.0:
+                        return
+                    if (now_mono - self._last_l_telemetry_ts) < 0.75 and not keyed_nodes:
+                        return
+                    self._last_l_telemetry_raw = raw_list
+                    self._last_l_telemetry_ts = now_mono
+
+                    from allstar_directory import allstar_dir_mgr
+                    rt = rt_telemetry
+                    direct_links = getattr(rt, "asl_links", None) or []
+                    direct_set = {str(lk.get("node", "")).strip() for lk in direct_links if isinstance(lk, dict) and lk.get("node")}
+                    direct_modes = {str(lk.get("node", "")).strip(): lk.get("mode", "*2") for lk in direct_links if isinstance(lk, dict) and lk.get("node")}
+                    direct_uptimes = {str(lk.get("node", "")).strip(): lk.get("uptime", "") for lk in direct_links if isinstance(lk, dict) and lk.get("node")}
+
+                    parsed_hub_nodes = []
+                    seen_n = set()
+                    own_cs_tok = str(getattr(rt.config, "callsign", "") if (rt and getattr(rt, "config", None)) else (self.client.callsign if self.client else "")).strip().upper()
+                    skip_tokens = tuple(x for x in (own_cs_tok, "LOCAL", "WEB", "PSEUDO", "N0CALL") if x)
+                    for tok in raw_list.split(","):
+                        tok = tok.strip()
+                        if not tok or any(p in tok.upper() for p in skip_tokens):
+                            continue
+                        m_tok = re.match(r"^([TRCtrcKkuU]+)?(\d{4,7})([TRCtrcKkuU]+)?$", tok)
+                        if not m_tok:
+                            continue
+                        pfx = (m_tok.group(1) or "").upper()
+                        n_id = m_tok.group(2)
+                        sfx = (m_tok.group(3) or "").upper()
+                        if n_id == own_n or n_id in seen_n:
+                            continue
+                        seen_n.add(n_id)
+                        flags_str = pfx + sfx
+                        is_k = ("K" in flags_str) or (n_id in keyed_nodes)
+                        is_c = ("C" in flags_str)
+                        is_t = ("T" in flags_str) or (direct_modes.get(n_id) == "*3")
+                        info = allstar_dir_mgr.get_node_info(n_id) or {}
+                        parsed_hub_nodes.append({
+                            "node": n_id,
+                            "mode": "*3" if is_t else "*2",
+                            "link_type": "TRX" if is_t else ("CON" if is_c else "MON"),
+                            "direction": "OUT" if n_id in direct_set else "HUB",
+                            "uptime": direct_uptimes.get(n_id, ""),
+                            "flag": info.get("flag") or "🌐",
+                            "callsign": info.get("callsign") or "",
+                            "name": info.get("name") or "",
+                            "location": info.get("location") or "",
+                            "city": info.get("city") or "",
+                            "country": info.get("country") or "",
+                            "keyed": is_k,
+                            "connecting": is_c,
+                            "is_hub": (n_id in direct_set),
+                            "status": "connecting" if is_c else "established",
+                        })
+                    if rt is not None and parsed_hub_nodes:
+                        prev_hub = getattr(rt, "asl_hub_nodes", None) or []
+                        if len(parsed_hub_nodes) <= 1 and len(prev_hub) > 1:
+                            k_set = set(keyed_nodes)
+                            for p_item in parsed_hub_nodes:
+                                if p_item.get("keyed") and p_item.get("node"):
+                                    k_set.add(str(p_item["node"]))
+                            merged_hub = []
+                            seen_prev = set()
+                            for old_item in prev_hub:
+                                old_copy = dict(old_item)
+                                n_str = str(old_copy.get("node", "")).strip()
+                                old_copy["keyed"] = (n_str in k_set)
+                                merged_hub.append(old_copy)
+                                seen_prev.add(n_str)
+                            for p_item in parsed_hub_nodes:
+                                n_str = str(p_item.get("node", "")).strip()
+                                if n_str and n_str not in seen_prev:
+                                    merged_hub.append(dict(p_item))
+                            parsed_hub_nodes = merged_hub
+                        rt.asl_hub_nodes = parsed_hub_nodes
+                    if parsed_hub_nodes:
+                        self.manager._notify_async({
+                            "type": "allstar_hub_telemetry",
+                            "hotspot_id": self.hotspot_id,
+                            "hub_nodes": parsed_hub_nodes,
+                            "keyed_nodes": keyed_nodes,
+                            "active_node": self._active_asl_node or (keyed_nodes[0] if keyed_nodes else ""),
+                            "user_id": self.user_id,
+                        }, user_id=self.user_id)
         except Exception as e:
             logger.debug(f"[ALLSTAR] Telemetry parse error: {e}")
 
+    def _resolve_active_caller_in_place(self, keyed_node: str):
+        """Updates active call metadata in-place when hub relay node is refined to a specific participant."""
+        keyed_node = str(keyed_node or "").strip()
+        if not keyed_node or not self._active_asl_call_id:
+            return
+        rt = self.manager.get_runtime(self.user_id, self.hotspot_id)
+        own_n = str(getattr(rt.config, "allstar_node", "1999") if rt else self.client.node).strip()
+        if keyed_node == own_n and own_n not in ("1999", "9999"):
+            return
+        self._active_asl_node = keyed_node
+        self._last_asl_node = keyed_node
+        if rt:
+            rt._active_asl_node = keyed_node
+            rt._last_asl_node = keyed_node
+        from allstar_directory import allstar_dir_mgr
+        info = allstar_dir_mgr.get_node_info(keyed_node) or {}
+        self._active_asl_info = info
+        src_callsign = info.get("callsign") or f"Node {keyed_node}"
+        src_name = info.get("name") or src_callsign
+        talker_alias = f"{src_callsign} · {info.get('city', '')}".strip(" ·")
+        active_calls = self.manager._get_user_active_calls(self.user_id)
+        call_key = f"{self.hotspot_id}_1"
+        cur_call = active_calls.get(call_key)
+        if cur_call and cur_call.id == self._active_asl_call_id:
+            cur_call.src_id = int(keyed_node) if keyed_node.isdigit() else 1999
+            cur_call.src_callsign = src_callsign
+            cur_call.src_name = src_name
+            cur_call.talker_alias = talker_alias
+            cur_call.city = info.get("city", "")
+            cur_call.country = info.get("country", "")
+        self.manager._notify_async({
+            "type": "caller_resolved",
+            "hotspot_id": self.hotspot_id,
+            "slot": 1,
+            "call_id": self._active_asl_call_id,
+            "src_id": int(keyed_node) if keyed_node.isdigit() else 1999,
+            "src_callsign": src_callsign,
+            "src_name": src_name,
+            "talker_alias": talker_alias,
+            "user_id": self.user_id,
+        }, user_id=self.user_id)
+
     def _split_call_on_node_change(self, new_node: str):
-        """Gracefully finishes previous node call and starts a new call for the newly keyed node."""
+        """Gracefully finishes previous node call and starts a new call for the newly keyed node without draining browser audio buffer."""
         if not self._active_asl_call_id or not self.client.is_rx:
+            return
+        new_node = str(new_node or "").strip()
+        rt = self.manager.get_runtime(self.user_id, self.hotspot_id)
+        own_n = str(getattr(rt.config, "allstar_node", "1999") if rt else self.client.node).strip()
+        if not new_node or (new_node == own_n and own_n not in ("1999", "9999")):
             return
         logger.info(f"[ALLSTAR] Talking node changed during continuous RX from {self._active_asl_node} to {new_node}. Splitting call.")
         old_call_id = self._active_asl_call_id
@@ -842,7 +1066,11 @@ class AllStarClientAdapter:
             self.manager.recorder.on_rx_call_ended(self.hotspot_id, 1, call_id=old_call_id)
         if self.manager.transcriber and self.manager.transcriber.is_slot_enabled(self.hotspot_id, 1):
             self.manager.transcriber.on_call_ended(self.hotspot_id, 1, call_id=old_call_id)
-        self._on_asl_carrier_change(False)
+        self._in_call_split = True
+        try:
+            self._on_asl_carrier_change(False)
+        finally:
+            self._in_call_split = False
         self._active_asl_node = str(new_node)
         self._last_asl_node = str(new_node)
         rt = self.manager.get_runtime(self.user_id, self.hotspot_id)
@@ -905,7 +1133,7 @@ class AllStarClientAdapter:
         try:
             from dmr.audio_equalizer import BiquadFilter
             bf = BiquadFilter()
-            bf.setup_highpass(300.0, Q=0.7071, fs=8000.0)
+            bf.setup_highpass(250.0, Q=0.7071, fs=8000.0)
             self._ctcss_biquad = bf
         except Exception as e:
             logger.warning(f"[ALLSTAR] Failed to initialize CTCSS Biquad filter: {e}")
@@ -1004,7 +1232,7 @@ class AllStarClientAdapter:
     async def _play_parrot_buffer(self, pcm_data: bytes, echo_node: str = "1999"):
         """Plays recorded TX audio back through the full ASL RX pipeline as node 1999 (Parrot)."""
         try:
-            await asyncio.sleep(0.60)
+            await asyncio.sleep(1.05)
             self._forced_echo_node = echo_node
             self._on_asl_carrier_change(True)
 
@@ -1124,6 +1352,7 @@ class AllStarClientAdapter:
     def stop_ptt(self):
         if self._tx_ready_task and not self._tx_ready_task.done():
             self._tx_ready_task.cancel()
+        self._last_tx_stop_ts = time.time()
         self.client.stop_ptt()
         rt = self.manager.get_runtime(self.user_id, self.hotspot_id)
         if self._active_asl_node:
@@ -1224,59 +1453,88 @@ class AllStarClientAdapter:
             while self.client.is_rx and self._active_asl_call_id == initial_call_id:
                 rt = self.manager.get_runtime(self.user_id, self.hotspot_id)
                 own_n = str(getattr(rt.config, "allstar_node", "1999") if rt else self.client.node).strip()
+                if self.client and self.client.is_rx:
+                    self.client.send_text(f"K? * {self.client.callsign} 0 0")
 
-                live_links = await loop.run_in_executor(
-                    None, asl_container_mgr.get_connected_links, str(self.user_id), own_n
+                topo = await loop.run_in_executor(
+                    None, asl_container_mgr.get_hub_topology, str(self.user_id), own_n
                 )
                 if not self.client.is_rx or self._active_asl_call_id != initial_call_id:
                     break
 
-                if rt is not None and live_links:
-                    rt.asl_links = live_links
-
-                keyed_nodes = []
+                live_links = (topo or {}).get("links") or []
+                hub_nodes = (topo or {}).get("hub_nodes") or []
+                keyed_nodes = list((topo or {}).get("keyed_nodes") or [])
                 for lk in (live_links or []):
                     if lk.get("keyed") and lk.get("node"):
-                        keyed_nodes.append(str(lk["node"]).strip())
+                        kn = str(lk["node"]).strip()
+                        if kn not in keyed_nodes:
+                            keyed_nodes.append(kn)
+
+                if rt is not None:
+                    if live_links:
+                        rt.asl_links = live_links
+                    prev_hub = getattr(rt, "asl_hub_nodes", None) or []
+                    if len(hub_nodes) <= 1 and len(prev_hub) > 1 and live_links:
+                        hub_nodes = [dict(x) for x in prev_hub]
+
+                # Cross-check live K? participant responses and AllStarLink keyed stats against hub participants
+                primary_hub_id = str(live_links[0].get("node", "")).strip() if live_links else str(getattr(rt, "connected_node", "") or "").strip()
+                hub_node_ids = {str(x.get("node", "")).strip() for x in hub_nodes if x.get("node")}
+                now_mono = time.monotonic()
+                participant_keyed: List[str] = []
+                for k_n, k_ts in list(self._live_keyed_participants.items()):
+                    if (now_mono - k_ts) < 8.0 and k_n != own_n and k_n != primary_hub_id:
+                        participant_keyed.append(k_n)
+
+                if not participant_keyed and len(hub_node_ids) > 1:
+                    try:
+                        from allstar_directory import allstar_dir_mgr
+                        if (time.time() - getattr(allstar_dir_mgr, "_keyed_cache_ts", 0.0)) > 3.5:
+                            await allstar_dir_mgr.fetch_keyed_nodes(force=True)
+                        for k_entry in (getattr(allstar_dir_mgr, "_keyed_cache", None) or []):
+                            kn_str = str(k_entry.get("node", "")).strip()
+                            if kn_str and kn_str in hub_node_ids and kn_str != primary_hub_id and kn_str != own_n:
+                                participant_keyed.append(kn_str)
+                    except Exception:
+                        pass
+
+                if participant_keyed:
+                    # Specific participant(s) inside the hub are transmitting: prioritize them over the hub relay node
+                    keyed_nodes = participant_keyed + [n for n in keyed_nodes if n not in participant_keyed and n != primary_hub_id]
+                elif self.client.is_rx and not keyed_nodes and primary_hub_id:
+                    keyed_nodes = [primary_hub_id]
+
+                if hub_nodes:
+                    k_set = set(keyed_nodes)
+                    for h_item in hub_nodes:
+                        h_id = str(h_item.get("node", "")).strip()
+                        h_item["keyed"] = (h_id in k_set)
+                    if rt is not None:
+                        rt.asl_hub_nodes = hub_nodes
+
+                if hub_nodes:
+                    self.manager._notify_async({
+                        "type": "allstar_hub_telemetry",
+                        "hotspot_id": self.hotspot_id,
+                        "hub_nodes": hub_nodes,
+                        "hub_info": (topo or {}).get("hub_info"),
+                        "keyed_nodes": keyed_nodes,
+                        "active_node": keyed_nodes[0] if keyed_nodes else (self._active_asl_node or ""),
+                        "user_id": self.user_id,
+                    }, user_id=self.user_id)
 
                 if keyed_nodes:
-                    keyed_node = keyed_nodes[0]
+                    keyed_node = str(keyed_nodes[0]).strip()
                     call_dur = time.time() - (self._active_asl_start_ts or time.time())
-                    if first_poll and call_dur < 2.5 and keyed_node != self._active_asl_node:
-                        # Refine talking node metadata for current call early on
-                        self._active_asl_node = keyed_node
-                        from allstar_directory import allstar_dir_mgr
-                        info = allstar_dir_mgr.get_node_info(keyed_node)
-                        self._active_asl_info = info
-                        src_callsign = info.get("callsign") or f"Node {keyed_node}"
-                        src_name = info.get("name") or src_callsign
-                        talker_alias = f"{src_callsign} · {info.get('city', '')}".strip(" ·")
-                        active_calls = self.manager._get_user_active_calls(self.user_id)
-                        call_key = f"{self.hotspot_id}_1"
-                        cur_call = active_calls.get(call_key)
-                        if cur_call and cur_call.id == initial_call_id:
-                            cur_call.src_id = int(keyed_node) if keyed_node.isdigit() else 1999
-                            cur_call.src_callsign = src_callsign
-                            cur_call.src_name = src_name
-                            cur_call.talker_alias = talker_alias
-                            cur_call.city = info.get("city", "")
-                            cur_call.country = info.get("country", "")
-
-                        self.manager._notify_async({
-                            "type": "caller_resolved",
-                            "hotspot_id": self.hotspot_id,
-                            "slot": 1,
-                            "call_id": initial_call_id,
-                            "src_id": int(keyed_node) if keyed_node.isdigit() else 1999,
-                            "src_callsign": src_callsign,
-                            "src_name": src_name,
-                            "talker_alias": talker_alias,
-                            "user_id": self.user_id,
-                        }, user_id=self.user_id)
-                    elif call_dur >= 2.5 and keyed_node != self._active_asl_node:
-                        # Another node keyed up without pause: split call
-                        self._split_call_on_node_change(keyed_node)
-                        break
+                    if keyed_node and keyed_node != str(self._active_asl_node):
+                        if str(self._active_asl_node) == primary_hub_id or (first_poll and call_dur < 2.5):
+                            # Refine talking node metadata in-place without splitting or interrupting audio
+                            self._resolve_active_caller_in_place(keyed_node)
+                        elif keyed_node != primary_hub_id and call_dur >= 2.5:
+                            # A different spoke participant keyed up without carrier drop: split call smoothly
+                            self._split_call_on_node_change(keyed_node)
+                            break
 
                 first_poll = False
                 await asyncio.sleep(1.5)
@@ -1343,27 +1601,57 @@ class AllStarClientAdapter:
             now_ts = time.time()
 
             if is_rx:
+                own_n = str(getattr(rt.config, "allstar_node", "1999") if rt else self.client.node).strip()
+                if not self._forced_echo_node:
+                    if (self.client and self.client.is_tx) or ((now_ts - getattr(self, "_last_tx_stop_ts", 0.0)) < 0.45):
+                        logger.debug(f"[ALLSTAR] Ignoring RX carrier during/immediately after own TX on node {own_n}")
+                        if self.client:
+                            self.client.is_rx = False
+                        return
+
                 if self._forced_echo_node:
                     conn_node = self._forced_echo_node
                     keyed_nodes = [self._forced_echo_node]
                 else:
-                    conn_node = getattr(rt, "connected_node", None) if rt else None
+                    conn_node = str(getattr(rt, "connected_node", "") or "").strip() if rt else ""
+                    if conn_node == own_n and own_n not in ("1999", "9999"):
+                        conn_node = ""
                     keyed_nodes = []
                     cached_links = (getattr(rt, "asl_links", None) or []) if rt else []
                     for lk in cached_links:
-                        if lk.get("keyed") and lk.get("node"):
-                            keyed_nodes.append(str(lk["node"]).strip())
+                        lk_n = str(lk.get("node") or "").strip()
+                        if lk.get("keyed") and lk_n and lk_n != own_n:
+                            keyed_nodes.append(lk_n)
                     if keyed_nodes:
                         conn_node = keyed_nodes[0]
                     elif cached_links and (not conn_node or conn_node == "0"):
-                        conn_node = str(cached_links[0].get("node") or "")
+                        for lk in cached_links:
+                            lk_n = str(lk.get("node") or "").strip()
+                            if lk_n and lk_n != own_n:
+                                conn_node = lk_n
+                                break
+                    if not conn_node or conn_node == "0":
+                        for cand in (
+                            getattr(rt, "_connecting_asl_node", "") if rt else "",
+                            self._active_asl_node,
+                            self._last_asl_node,
+                            getattr(rt, "_last_asl_node", "") if rt else "",
+                        ):
+                            cand_s = str(cand or "").strip()
+                            if cand_s and cand_s != "0" and cand_s != own_n:
+                                conn_node = cand_s
+                                break
 
-                if not conn_node or conn_node == "0":
-                    conn_node = str(getattr(rt.config, "allstar_node", "1999") if rt else self.client.node)
+                if not conn_node or conn_node == "0" or (conn_node == own_n and own_n not in ("1999", "9999") and not self._forced_echo_node):
+                    logger.info(f"[ALLSTAR] Suppressing phantom RX call with own/unlinked node (conn_node={conn_node!r}, own_n={own_n!r})")
+                    self._active_asl_call_id = None
+                    self._active_asl_node = ""
+                    if self.client:
+                        self.client.is_rx = False
+                    return
 
                 from allstar_directory import allstar_dir_mgr
-                fb_call = getattr(rt.config, "callsign", "") if rt else ""
-                node_info = allstar_dir_mgr.get_node_info(conn_node, fallback_callsign=fb_call)
+                node_info = allstar_dir_mgr.get_node_info(conn_node, fallback_callsign="")
                 self._active_asl_info = node_info
                 self._active_asl_node = conn_node
                 self._last_asl_node = conn_node
@@ -1490,12 +1778,15 @@ class AllStarClientAdapter:
                 }, user_id=self.user_id)
 
                 if not self._forced_echo_node:
+                    if self.client:
+                        self.client.send_text(f"K? * {self.client.callsign} 0 0")
                     if self._rx_alinks_poll_task and not self._rx_alinks_poll_task.done():
                         self._rx_alinks_poll_task.cancel()
                     self._rx_alinks_poll_task = asyncio.create_task(self._poll_active_rx_links(call_id))
 
             else:
                 # RX Carrier Unkeyed
+                self._live_keyed_participants.clear()
                 if rt:
                     rt.ts1.active = False
 
@@ -1535,6 +1826,16 @@ class AllStarClientAdapter:
 
                 info = self._active_asl_info or {}
 
+                # Always flush and clear any remaining coalesced tail audio (< 960 bytes)
+                # ONLY when carrier truly drops (not during mid-stream _in_call_split!).
+                if not self._in_call_split and rt and hasattr(rt, "asl_rx_pcm_accum") and rt.asl_rx_pcm_accum:
+                    tail = bytes(rt.asl_rx_pcm_accum)
+                    rt.asl_rx_pcm_accum.clear()
+                    if len(tail) % 2 != 0:
+                        tail += b"\x00"
+                    if tail:
+                        self._process_coalesced_rx_chunk(rt, tail)
+
                 if is_discard:
                     logger.info(f"[ALLSTAR] Discarding short transmission [{call_id}] ({duration:.1f}s < min_dur {min_dur:.1f}s)")
                     call_history = self.manager._get_user_call_history(self.user_id)
@@ -1554,6 +1855,7 @@ class AllStarClientAdapter:
                         "hotspot_id": self.hotspot_id,
                         "slot": 1,
                         "active": False,
+                        "keep_audio": bool(self._in_call_split),
                         "call_id": call_id,
                         "duration": round(duration, 1),
                         "discard": True,
@@ -1584,15 +1886,6 @@ class AllStarClientAdapter:
                         self.manager._history_dirty.add(self.user_id)
                         self.manager._save_calls_history(self.user_id)
 
-                    # Flush any remaining coalesced tail audio (< 960 bytes)
-                    if rt and hasattr(rt, "asl_rx_pcm_accum") and rt.asl_rx_pcm_accum:
-                        tail = bytes(rt.asl_rx_pcm_accum)
-                        rt.asl_rx_pcm_accum.clear()
-                        if len(tail) % 2 != 0:
-                            tail += b"\x00"
-                        if tail:
-                            self._process_coalesced_rx_chunk(rt, tail)
-
                     if hasattr(self.manager, "recorder") and self.manager.recorder:
                         self.manager.recorder.on_rx_call_ended(self.hotspot_id, 1, call_id=call_id)
                     if self.manager.transcriber and self.manager.transcriber.is_slot_enabled(self.hotspot_id, 1):
@@ -1603,6 +1896,7 @@ class AllStarClientAdapter:
                         "hotspot_id": self.hotspot_id,
                         "slot": 1,
                         "active": False,
+                        "keep_audio": bool(self._in_call_split),
                         "call_id": call_id,
                         "duration": round(duration, 1),
                         "discard": False,
@@ -1627,13 +1921,8 @@ class AllStarClientAdapter:
                         "duration": round(duration, 1),
                         "user_id": self.user_id,
                     }
-                    self.manager._notify_call_ended(
-                        self.user_id,
-                        rt,
-                        1,
-                        dmr_act_payload,
-                        extra_cb=lambda: self.manager._notify_async(carrier_payload, user_id=self.user_id)
-                    )
+                    self.manager._notify_async(dmr_act_payload, user_id=self.user_id)
+                    self.manager._notify_async(carrier_payload, user_id=self.user_id)
 
                 self._active_asl_call_id = None
                 if self._active_asl_node:
@@ -1648,20 +1937,21 @@ class AllStarClientAdapter:
 
     def _process_coalesced_rx_chunk(self, rt, chunk_960: bytes):
         rt.ts1.last_seen = time.time()
-        # Apply AGC if enabled
-        if hasattr(rt, "agc") and rt.agc and rt.agc.enabled:
-            chunk_960 = rt.agc.process_burst(chunk_960, slot=1)
-        # Apply equalizer if enabled
-        if hasattr(rt, "equalizer") and rt.equalizer:
-            chunk_960 = rt.equalizer.process_burst(chunk_960, slot=1)
-
+        # Direct 8 kHz 16-bit mono stream to frontend (bypassing server-side slot pacer, matching DMR direct broadcast)
         hid_bytes = self.hotspot_id.encode("utf-8")
         tagged_audio = bytes([1, len(hid_bytes)]) + hid_bytes + chunk_960
-        self.manager._enqueue_or_send_rx_audio(self.user_id, rt, 1, tagged_audio)
+        self.manager._broadcast_audio_async(tagged_audio, user_id=self.user_id)
 
-        # Route to transcriber if enabled
-        if self.manager.transcriber and self.manager.transcriber.is_slot_enabled(self.hotspot_id, 1):
-            active_n = str(self._active_asl_node or (self.client.node if self.client else 1999))
+        own_n = str(getattr(rt.config, "allstar_node", "1999") if rt else (self.client.node if self.client else "1999")).strip()
+        active_n = str(self._active_asl_node or "").strip()
+        is_valid_rx_call = bool(
+            self._active_asl_call_id
+            and active_n
+            and (active_n != own_n or own_n in ("1999", "9999") or bool(self._forced_echo_node))
+        )
+
+        # Route to transcriber if enabled (transcriber expects 8kHz)
+        if is_valid_rx_call and self.manager.transcriber and self.manager.transcriber.is_slot_enabled(self.hotspot_id, 1):
             node_id = int(active_n) if active_n.isdigit() else 1999
             active_cs = (self._active_asl_info or {}).get("callsign") or f"Node {active_n}"
             voice_prof = self.client.get_current_voice_profile() if self.client else {}
@@ -1677,13 +1967,12 @@ class AllStarClientAdapter:
             )
 
         # Route to recorder if active
-        if hasattr(self.manager, "recorder") and self.manager.recorder:
+        if is_valid_rx_call and hasattr(self.manager, "recorder") and self.manager.recorder:
             if (self.client and self.client.is_rx) or self._active_asl_call_id:
-                conn_node = self._active_asl_node or (self.client.node if self.client else 1999)
-                node_id = int(conn_node) if str(conn_node).isdigit() else 1999
+                node_id = int(active_n) if active_n.isdigit() else 1999
                 auto_rec = getattr(rt.config, "auto_record", True) if rt else True
                 info = self._active_asl_info or {}
-                src_callsign = info.get("callsign") or f"Node {conn_node}"
+                src_callsign = info.get("callsign") or f"Node {active_n}"
                 src_name = info.get("name") or "AllStarLink"
                 talker_alias = f"{info.get('flag', '🌐')} {src_callsign}"
                 self.manager.recorder.feed_rx(

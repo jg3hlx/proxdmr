@@ -208,6 +208,12 @@ class ServerAudioAgc:
 
         now = time.monotonic()
 
+        # Dynamic chunk duration (supports both 20ms ASL frames and 60ms DMR bursts identically)
+        chunk_dur = max(0.005, min(0.200, num_samples / 8000.0))
+        attack_alpha = math.exp(-chunk_dur / 0.060)
+        decay_alpha = math.exp(-chunk_dur / 0.600)
+        release_alpha = math.exp(-chunk_dur / max(0.100, self.decay_time))
+
         # ── Step 1: Calculate RMS of this chunk ──
         sum_sq = 0.0
         for s in samples:
@@ -233,16 +239,16 @@ class ServerAudioAgc:
                 state.envelope = chunk_rms
                 state.initialized = True
             elif chunk_rms > state.envelope:
-                # Attack: fast (60ms = 1 chunk) to catch speech onset
+                # Attack: fast (60ms time constant) to catch speech onset
                 state.envelope = (
-                    ATTACK_ALPHA * state.envelope
-                    + (1.0 - ATTACK_ALPHA) * chunk_rms
+                    attack_alpha * state.envelope
+                    + (1.0 - attack_alpha) * chunk_rms
                 )
             else:
-                # Decay: smooth (600ms) for syllabic tracking
+                # Decay: smooth (600ms time constant) for syllabic tracking
                 state.envelope = (
-                    DECAY_ALPHA * state.envelope
-                    + (1.0 - DECAY_ALPHA) * chunk_rms
+                    decay_alpha * state.envelope
+                    + (1.0 - decay_alpha) * chunk_rms
                 )
 
             # Logarithmic dynamic range compression
@@ -275,14 +281,13 @@ class ServerAudioAgc:
                 target_gain = state.current_gain
             else:
                 # FIX for bug #3: Per-chunk release decay (NOT cumulative!)
-                # Use fixed dt = CHUNK_DURATION, not cumulative elapsed time
                 state.current_gain = (
-                    RELEASE_ALPHA * state.current_gain
-                    + (1.0 - RELEASE_ALPHA) * 1.0
+                    release_alpha * state.current_gain
+                    + (1.0 - release_alpha) * 1.0
                 )
                 state.envelope = (
-                    RELEASE_ALPHA * state.envelope
-                    + (1.0 - RELEASE_ALPHA) * 0.0
+                    release_alpha * state.envelope
+                    + (1.0 - release_alpha) * 0.0
                 )
                 target_gain = state.current_gain
 
@@ -290,18 +295,20 @@ class ServerAudioAgc:
         start_gain = state.last_applied_gain
         gain_step = (target_gain - start_gain) / num_samples
         curr_gain = start_gain
+        soft_knee = 24576.0
+        soft_headroom = 8191.0
 
         for i in range(num_samples):
             curr_gain += gain_step
             sample = samples[i] * curr_gain
 
-            # Soft clipping with tanh above 30000 (leaves 767 headroom for tanh)
-            if sample > SOFT_CLIP_THRESHOLD:
-                over = sample - SOFT_CLIP_THRESHOLD
-                sample = SOFT_CLIP_THRESHOLD + 767.0 * math.tanh(over / 3000.0)
-            elif sample < -SOFT_CLIP_THRESHOLD:
-                over = sample + SOFT_CLIP_THRESHOLD
-                sample = -SOFT_CLIP_THRESHOLD + 767.0 * math.tanh(over / 3000.0)
+            # C1-continuous soft clipping with tanh above 24576
+            if sample > soft_knee:
+                over = sample - soft_knee
+                sample = soft_knee + soft_headroom * math.tanh(over / soft_headroom)
+            elif sample < -soft_knee:
+                over = sample + soft_knee
+                sample = -soft_knee + soft_headroom * math.tanh(over / soft_headroom)
 
             # Hard clamp to int16 range
             if sample > INT16_MAX:

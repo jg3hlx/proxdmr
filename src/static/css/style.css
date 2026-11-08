@@ -324,21 +324,7 @@ body {
 }
 
 .hotspot-delete-btn {
-  background: transparent;
-  border: 1px solid rgba(248, 81, 73, 0.3);
-  color: #ff7b72;
-  font-size: 0.8rem;
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: var(--app-border-radius, 0px);
-  line-height: 1;
-  transition: all 0.15s ease;
-}
-
-.hotspot-delete-btn:hover {
-  background: rgba(248, 81, 73, 0.25);
-  border-color: #f85149;
-  color: #fff;
+  display: none !important;
 }
 
 /* Top Header */
@@ -884,7 +870,7 @@ body.is-apk-mode .badge-about-apk-date {
 }
 
 .hotspot-network-badge:hover {
-  transform: translateY(-0.5px);
+  transform: none;
 }
 
 .hotspot-network-badge .net-badge-icon {
@@ -2343,7 +2329,6 @@ select option:focus {
 }
 
 .status-badge-item:hover {
-  transform: translateY(-1px);
   filter: brightness(1.2);
 }
 
@@ -2439,7 +2424,6 @@ select option:focus {
 
 .status-badge-item.ts-audio-mode-btn:hover .ts-audio-mode-badge {
   filter: brightness(1.25);
-  transform: translateY(-1px);
 }
 
 .status-badge-item.ts-audio-mode-btn:active .ts-audio-mode-badge {
@@ -2474,7 +2458,7 @@ select option:focus {
   flex: 1 1 0;
   min-width: 0;
   height: 22px;
-  border-radius: var(--app-border-radius, 0px);
+  border-radius: 2px !important;
   overflow: visible !important;
   /* 3D Raised control pair effect */
   box-shadow:
@@ -2495,7 +2479,7 @@ select option:focus {
   justify-content: center;
   
   padding: 0 6px;
-  border-radius: var(--app-border-radius, 0px);
+  border-radius: 2px 0 0 2px !important;
   font-size: 0.68rem;
   font-weight: 700;
   cursor: pointer;
@@ -2536,7 +2520,7 @@ select option:focus {
   justify-content: center;
   gap: 2px;
   padding: 0 5px;
-  border-radius: var(--app-border-radius, 0px);
+  border-radius: 0 2px 2px 0 !important;
   border-left: none !important;
   font-size: 0.68rem;
   font-weight: 700;
@@ -3101,6 +3085,45 @@ select option:focus {
   border-color: #6e7681 !important;
 }
 
+/* Hotspot Volume Boost Active State (Bright Red Indicator) */
+.vertical-volume-strip.vol-boosted {
+  border-color: #ff1744 !important;
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.8), 0 0 10px rgba(255, 23, 68, 0.45) !important;
+}
+
+.vertical-volume-strip.vol-boosted::before {
+  background: linear-gradient(90deg, transparent, rgba(255, 23, 68, 0.85), transparent) !important;
+}
+
+.vertical-volume-strip.vol-boosted .volume-val-v {
+  color: #ff1744 !important;
+  text-shadow: 0 0 6px rgba(255, 23, 68, 0.8) !important;
+}
+
+.vertical-volume-strip.vol-boosted .volume-slider-v-wrap::before {
+  border-color: rgba(255, 23, 68, 0.75) !important;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.85), 0 0 6px rgba(255, 23, 68, 0.3) !important;
+}
+
+.vertical-volume-strip.vol-boosted .volume-slider-v-wrap::after {
+  background: #ff1744 !important;
+  box-shadow: 0 0 8px rgba(255, 23, 68, 0.95), 0 0 16px rgba(255, 23, 68, 0.5) !important;
+}
+
+.vertical-volume-strip.vol-boosted .volume-slider-v {
+  accent-color: #ff1744 !important;
+}
+
+.vertical-volume-strip.vol-boosted .volume-slider-v::-webkit-slider-thumb {
+  background: #ff1744 !important;
+  box-shadow: 0 0 10px rgba(255, 23, 68, 1), 0 0 18px rgba(255, 23, 68, 0.6) !important;
+}
+
+.vertical-volume-strip.vol-boosted .volume-slider-v::-moz-range-thumb {
+  background: #ff1744 !important;
+  box-shadow: 0 0 10px rgba(255, 23, 68, 1), 0 0 18px rgba(255, 23, 68, 0.6) !important;
+}
+
 /* Vertical slider for all modern engines (Blink, Gecko, WebKit) */
 .volume-slider-v {
   -webkit-appearance: slider-vertical;
@@ -3528,7 +3551,6 @@ select option:focus {
   background: #21262d;
   border-color: #58a6ff;
   color: #58a6ff;
-  transform: translateY(-1px);
   box-shadow: 0 4px 10px rgba(88, 166, 255, 0.15);
 }
 
@@ -3583,7 +3605,6 @@ select option:focus {
   background: #21262d;
   border-color: #58a6ff;
   color: #58a6ff;
-  transform: translateY(-1px);
   box-shadow: 0 4px 10px rgba(88, 166, 255, 0.15);
 }
 
@@ -3934,6 +3955,45 @@ body.auth-locked #toastContainer {
 .modal-header .icon-btn {
   margin-left: auto;
   flex-shrink: 0;
+}
+
+/* Header Actions Group (Reset / Save / Close) */
+.modal-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.btn-modal-header-action {
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  padding: 0 11px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: var(--app-border-radius, 4px);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  box-sizing: border-box;
+  line-height: 1;
+}
+
+@media (max-width: 480px) {
+  .modal-header-actions {
+    gap: 5px;
+  }
+  .btn-modal-header-action {
+    height: 26px;
+    min-height: 26px;
+    max-height: 26px;
+    padding: 0 8px;
+    font-size: 0.72rem;
+  }
 }
 
 #settingsModal .modal-content {
@@ -5633,7 +5693,6 @@ textarea::placeholder {
     border-color: rgba(255, 255, 255, 0.85);
     box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
     color: #ffffff;
-    transform: translateY(-1px);
   }
 
   .vfo-tg-pill:active,
@@ -5648,6 +5707,14 @@ textarea::placeholder {
     background: rgba(159, 248, 191, 0.12) !important;
     border-color: rgba(159, 248, 191, 0.35) !important;
   }
+
+/* Suppress update banner & badges in Demo mode */
+body.is-demo-mode #systemUpdateBanner,
+body.is-demo-mode #systemUpdateBadgeHeader,
+.is-demo-mode #systemUpdateBanner,
+.is-demo-mode #systemUpdateBadgeHeader {
+  display: none !important;
+}
 
   @keyframes ptt-target-select-flash {
     0% { transform: scale(1); filter: brightness(1); }
@@ -9839,7 +9906,6 @@ body.is-apk-mode .log-hotspot-tabs {
 
 .log-col-dur-mode-badge:hover {
   filter: brightness(1.25);
-  transform: translateY(-1px);
 }
 
 .log-col-dur-mode-badge:active {
@@ -10438,7 +10504,6 @@ body.is-apk-mode .log-hotspot-tabs {
   background: #21262d;
   border-color: #58a6ff;
   color: #58a6ff;
-  transform: translateY(-1px);
   box-shadow: 0 4px 10px rgba(88, 166, 255, 0.15);
 }
 
@@ -11469,7 +11534,6 @@ body.is-apk-mode .log-hotspot-tabs {
   color: #38bdf8;
   background: #21262d;
   box-shadow: 0 4px 10px rgba(56, 189, 248, 0.2);
-  transform: translateY(-1px);
 }
 
 .btn-tg-use:active {
@@ -11486,7 +11550,6 @@ body.is-apk-mode .log-hotspot-tabs {
   color: #fde047;
   background: #21262d;
   box-shadow: 0 4px 10px rgba(234, 179, 8, 0.2);
-  transform: translateY(-1px);
 }
 
 .btn-call-id:active {
@@ -11647,7 +11710,6 @@ body.is-apk-mode .log-hotspot-tabs {
   border-color: #70b5ff !important;
   background: #5ea6fd !important;
   box-shadow: 0 4px 12px rgba(75, 153, 253, 0.45) !important;
-  transform: translateY(-1px);
 }
 
 .ptt-side-top-row .btn-settings:active {
@@ -11706,7 +11768,6 @@ body.is-apk-mode .log-hotspot-tabs {
   color: #58a6ff;
   background: #21262d;
   box-shadow: 0 4px 10px rgba(88, 166, 255, 0.18);
-  transform: translateY(-1px);
 }
 
 /* Log Button in PTT Side Right */
@@ -11718,7 +11779,6 @@ body.is-apk-mode .log-hotspot-tabs {
   color: #a5d6ff;
   background: #21262d;
   box-shadow: 0 4px 10px rgba(165, 214, 255, 0.18);
-  transform: translateY(-1px);
 }
 .btn-ptt-side-half.btn-log-drawer.active {
   border-color: #3fb950 !important;
@@ -11739,7 +11799,6 @@ body.is-apk-mode .log-hotspot-tabs {
   color: #a5d6ff;
   background: #21262d;
   box-shadow: 0 4px 10px rgba(165, 214, 255, 0.18);
-  transform: translateY(-1px);
 }
 .btn-log-quick.active {
   border-color: #3fb950 !important;
@@ -12134,7 +12193,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   background: #30363d !important;
   color: #f0f6fc !important;
   border-color: #8b949e !important;
-  transform: translateY(-1px);
 }
 
 .btn-new-folder:active {
@@ -12163,7 +12221,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
 .btn-new-contact:hover {
   background: #388bfd !important;
   box-shadow: 0 0 10px rgba(56, 139, 253, 0.5) !important;
-  transform: translateY(-1px);
 }
 
 .btn-new-contact:active {
@@ -12359,7 +12416,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
 .btn-save-contacts-gw:hover {
   background: #388bfd !important;
   box-shadow: 0 0 8px rgba(56, 139, 253, 0.4) !important;
-  transform: translateY(-1px);
 }
 
 .btn-save-contacts-gw:active {
@@ -12812,12 +12868,17 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .modal-title-with-badge h3 {
   font-size: 0.95rem;
   margin: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .about-modal-header .modal-title-with-badge {
@@ -13018,7 +13079,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
 .search-result-card:hover {
   background: #21262d;
   border-color: #58a6ff;
-  transform: translateX(2px);
 }
 
 .search-result-left {
@@ -13151,7 +13211,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   border-color: #38bdf8;
   color: #ffffff;
   box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
-  transform: translateY(-1px);
 }
 
 .btn-card-bm-info:active {
@@ -13518,7 +13577,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   background: #30363d;
   color: #fff;
   border-color: #58a6ff;
-  transform: translateY(-1px);
 }
 
 .btn-dsdfme-preset.active {
@@ -13550,7 +13608,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   background: rgba(88, 166, 255, 0.15);
   border-color: #58a6ff;
   color: #ffffff;
-  transform: translateY(-1px);
 }
 
 .btn-preset-save.saved-flash {
@@ -13788,10 +13845,10 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   height: 78px;
   flex-shrink: 0;
   border-radius: 50%;
-  border: 2.5px solid var(--color-cyan, #00e5ff);
-  box-shadow: 0 0 16px rgba(0, 229, 255, 0.45);
+  border: none;
+  box-shadow: none;
   overflow: hidden;
-  background: #0d1117;
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -13919,7 +13976,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   background: rgba(0, 229, 255, 0.25);
   border-color: var(--color-cyan, #00e5ff);
   box-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
-  transform: translateY(-1px);
 }
 
 /* Green copied state with single blink */
@@ -14022,7 +14078,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
 .about-credit-card:hover {
   background: #1c2128;
   border-color: rgba(88, 166, 255, 0.5);
-  transform: translateY(-1px);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
@@ -14259,7 +14314,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   background: #30363d;
   color: #fff;
   border-color: #00e5ff;
-  transform: translateY(-1px);
 }
 
 .btn-audio-preset.active {
@@ -14278,7 +14332,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   background: rgba(0, 229, 255, 0.15);
   border-color: #00e5ff;
   color: #ffffff;
-  transform: translateY(-1px);
 }
 
 .audio-section {
@@ -14431,7 +14484,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   background: #30363d;
   border-color: #58a6ff;
   color: #ffffff !important;
-  transform: translateY(-1px);
 }
 
 .btn-agc-profile.active {
@@ -16674,7 +16726,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
 .btn-apk-download:hover,
 .btn-apk-download:active {
   background: #2ea043;
-  transform: translateY(-1px);
 }
 
 .btn-apk-close {
@@ -16799,7 +16850,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
 
 .tg-action-tile:hover {
   background: #21262d;
-  transform: translateY(-1px);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 
@@ -16850,7 +16900,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
 
 .tg-action-tile:hover .tile-chevron {
   color: #ffffff;
-  transform: translateX(3px);
 }
 
 /* Specific Tile Styling Accents */
@@ -17565,7 +17614,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   background: rgba(245, 158, 11, 0.15);
   border-color: #f59e0b;
   box-shadow: 0 0 10px rgba(245, 158, 11, 0.3);
-  transform: translateY(-1px);
 }
 
 .btn-quick-mem:active {
@@ -17942,7 +17990,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   background: #21262d;
   border-color: #ff6700;
   box-shadow: 0 0 8px rgba(255, 103, 0, 0.35);
-  transform: translateY(-1px);
 }
 
 .btn-card-mem:active {
@@ -18909,7 +18956,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   background: rgba(56, 139, 253, 0.12);
   border-color: #58a6ff;
   box-shadow: 0 0 12px rgba(56, 139, 253, 0.35);
-  transform: translateY(-1px);
 }
 
 .btn-bm-info:active:not(:disabled):not(.disabled) {
@@ -19634,7 +19680,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   background: #2ea043;
   border-color: #3fb950;
   box-shadow: 0 0 12px rgba(46, 160, 67, 0.5);
-  transform: translateY(-1px);
 }
 
 .btn-bm-direct-call:active {
@@ -19693,7 +19738,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
 
 .bm-info-modal-footer .btn-bm-info-back:hover .bm-back-icon {
   stroke: #ffffff;
-  transform: translateX(-2px);
 }
 
 .bm-info-modal-footer .btn-bm-info-back:active {
@@ -21004,7 +21048,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   border-color: #0969da !important;
   color: #0550ae !important;
   box-shadow: 0 4px 10px rgba(9, 105, 218, 0.18) !important;
-  transform: translateY(-1px) !important;
 }
 
 /* 2. Search TG Button (Cyan / Sky theme) */
@@ -21018,7 +21061,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   border-color: #0284c7 !important;
   color: #0369a1 !important;
   box-shadow: 0 4px 10px rgba(2, 132, 199, 0.2) !important;
-  transform: translateY(-1px) !important;
 }
 
 /* 3. Call ID Button (Amber / Warm Ochre theme) */
@@ -21032,7 +21074,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   border-color: #d97706 !important;
   color: #92400e !important;
   box-shadow: 0 4px 10px rgba(217, 119, 6, 0.2) !important;
-  transform: translateY(-1px) !important;
 }
 
 [data-theme="light"] .btn-new-contact {
@@ -23623,9 +23664,9 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
 }
 
 [data-theme="light"] .about-avatar-wrap {
-  background: #ffffff !important;
-  border-color: #0969da !important;
-  box-shadow: 0 0 12px rgba(9, 105, 218, 0.25) !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 [data-theme="light"] .about-author-name {
@@ -24001,17 +24042,37 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
   border-top-color: #d0d7de !important;
 }
 
-/* 4. Audio RX & TX DSP Modals */
-[data-theme="light"] #audioRxModal .badge-audio-mode {
-  background: #ecfdf5 !important;
-  color: #15803d !important;
-  border: 1px solid #86efac !important;
+/* 4. Audio RX & TX DSP Modals - Theme-aware Mode Badges */
+.badge-audio-mode {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  display: inline-block;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+.badge-audio-mode.mode-digital {
+  background: rgba(13, 60, 104, 0.4);
+  color: #58a6ff;
+  border: 1px solid rgba(56, 139, 253, 0.4);
+}
+.badge-audio-mode.mode-analog {
+  background: rgba(46, 160, 67, 0.2);
+  color: #3fb950;
+  border: 1px solid rgba(46, 160, 67, 0.4);
 }
 
-[data-theme="light"] #audioTxModal .badge-audio-mode {
-  background: #fef2f2 !important;
-  color: #dc2626 !important;
-  border: 1px solid #fca5a5 !important;
+[data-theme="light"] .badge-audio-mode.mode-digital {
+  background: #ddf4ff !important;
+  color: #0969da !important;
+  border: 1px solid #54aeff !important;
+}
+
+[data-theme="light"] .badge-audio-mode.mode-analog {
+  background: #dafbe1 !important;
+  color: #1a7f37 !important;
+  border: 1px solid #4ac26b !important;
 }
 
 [data-theme="light"] .audio-presets-panel {
@@ -24116,6 +24177,101 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
 
 [data-theme="light"] .audio-modal-footer {
   border-top-color: #d0d7de !important;
+}
+
+/* --- High Contrast Light Theme for Audio RX / TX Modals --- */
+
+/* 1. TX Microphone Meter (VU-meter, track, led) */
+[data-theme="light"] .tx-mic-meter-box {
+  background: #f6f8fa !important;
+  border: 1px solid #d0d7de !important;
+  box-shadow: inset 0 1px 2px rgba(27, 31, 36, 0.04) !important;
+}
+[data-theme="light"] .tx-meter-header {
+  color: #24292f !important;
+  font-weight: 600 !important;
+}
+[data-theme="light"] .tx-meter-track {
+  background: #e1e4e8 !important;
+  border: 1px solid #d0d7de !important;
+}
+[data-theme="light"] .tx-clip-led {
+  background: #eaeef2 !important;
+  color: #8c959f !important;
+  border: 1px solid #d0d7de !important;
+}
+[data-theme="light"] .tx-clip-led.active {
+  background: #cf222e !important;
+  color: #ffffff !important;
+  border-color: #cf222e !important;
+  box-shadow: 0 0 8px rgba(207, 34, 46, 0.5) !important;
+}
+
+/* 2. TX 3-Band Equalizer Container, Badges & Preset Buttons */
+[data-theme="light"] .tx-eq-container {
+  background: #f6f8fa !important;
+  border: 1px solid #d0d7de !important;
+  box-shadow: inset 0 1px 2px rgba(27, 31, 36, 0.04) !important;
+}
+[data-theme="light"] .tx-eq-val-badge {
+  background: #ddf4ff !important;
+  color: #0969da !important;
+  border: 1px solid #54aeff !important;
+  font-weight: 700 !important;
+}
+[data-theme="light"] .tx-eq-freq-label {
+  color: #24292f !important;
+  font-weight: 600 !important;
+}
+[data-theme="light"] .btn-tx-eq-preset {
+  background: #ffffff !important;
+  border: 1px solid #d0d7de !important;
+  color: #24292f !important;
+}
+[data-theme="light"] .btn-tx-eq-preset:hover {
+  background: #eef2f6 !important;
+  border-color: #0969da !important;
+  color: #0969da !important;
+}
+[data-theme="light"] .btn-tx-eq-preset.active {
+  background: #0969da !important;
+  color: #ffffff !important;
+  border-color: #0969da !important;
+  box-shadow: 0 1px 3px rgba(9, 105, 218, 0.3) !important;
+}
+
+/* 3. RX 10-Band EQ Rack, Values & Reset Button */
+[data-theme="light"] .eq10-rack-container {
+  background: #f6f8fa !important;
+  border: 1px solid #d0d7de !important;
+  box-shadow: inset 0 1px 2px rgba(27, 31, 36, 0.04) !important;
+}
+[data-theme="light"] .eq10-val-lbl {
+  color: #0969da !important;
+  font-weight: 700 !important;
+}
+[data-theme="light"] .eq10-freq-lbl {
+  color: #57606a !important;
+  font-weight: 600 !important;
+}
+[data-theme="light"] .btn-mini-reset {
+  background: #ffffff !important;
+  border: 1px solid #d0d7de !important;
+  color: #24292f !important;
+}
+[data-theme="light"] .btn-mini-reset:hover {
+  background: #eef2f6 !important;
+  border-color: #0969da !important;
+  color: #0969da !important;
+}
+
+/* 4. AGC Value Labels in Light Theme */
+[data-theme="light"] .val-highlight {
+  color: #0969da !important;
+  font-weight: 700 !important;
+}
+[data-theme="light"] .slider-label-group span {
+  color: #24292f !important;
 }
 
 /* 5. Sliders (range inputs) in Light Theme */
@@ -24263,7 +24419,6 @@ html.is-apk-mode #myContactsModal .contacts-modal-content {
 .btn-bm-benchmark:hover {
   background: linear-gradient(135deg, #1d4ed8, #1e40af);
   border-color: #60a5fa;
-  transform: translateY(-1px);
   box-shadow: 0 4px 10px rgba(37, 99, 235, 0.35);
 }
 
@@ -26671,7 +26826,7 @@ body.is-apk-mode .log-col-dur-mode-badge {
 }
 
 .log-menu-action-btn:hover {
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .log-menu-action-btn .menu-icon {
@@ -27421,7 +27576,6 @@ body.is-apk-mode .log-col-dur-mode-badge {
 .onboarding-lang-card:hover {
   background: #282e38;
   border-color: rgba(72, 132, 255, 0.4);
-  transform: translateY(-1px);
 }
 
 .onboarding-lang-card.selected {
@@ -28063,7 +28217,6 @@ body.is-swl-mode .ptt-button::after,
   background: rgba(212, 175, 55, 0.25);
   border-color: #d4af37;
   color: #ffffff;
-  transform: translateY(-1px);
 }
 
 .btn-xlx-bar-mod.active-xlx-mod {
@@ -28473,7 +28626,6 @@ body.is-swl-mode .ptt-button::after,
   background: rgba(212, 175, 55, 0.25);
   border-color: #d4af37;
   color: #ffffff;
-  transform: translateY(-1px);
 }
 
 .btn-xlx-mod.active-xlx-mod {
@@ -28510,7 +28662,6 @@ body.is-swl-mode .ptt-button::after,
 
 .xlx-active-mod-pill:hover {
   border-color: #f1c40f;
-  transform: translateY(-1px);
 }
 
 .xlx-active-mod-pill strong {
@@ -29346,7 +29497,6 @@ body.is-swl-mode .ptt-button::after,
 .btn-tg-add-ts1:hover {
   background: rgba(0, 219, 247, 0.25);
   border-color: #00dbf7;
-  transform: translateY(-1px);
 }
 .btn-tg-add-ts1:active {
   transform: scale(0.96);
@@ -29361,7 +29511,6 @@ body.is-swl-mode .ptt-button::after,
 .btn-tg-add-ts2:hover {
   background: rgba(249, 135, 0, 0.25);
   border-color: #f98700;
-  transform: translateY(-1px);
 }
 .btn-tg-add-ts2:active {
   transform: scale(0.96);
@@ -30315,7 +30464,7 @@ svg[src*="flags/"],
   align-items: stretch;
   background: rgba(14, 165, 233, 0.12);
   border: 1px solid rgba(56, 189, 248, 0.4);
-  border-radius: 4px;
+  border-radius: 2px !important;
   overflow: hidden;
   height: 26px;
   transition: all 0.2s ease;
@@ -30893,6 +31042,13 @@ svg[src*="flags/"],
   text-shadow: 0 0 8px rgba(245, 158, 11, 0.35) !important;
 }
 
+/* Standby callsign: 1pt larger, only callsign without dots or words */
+.asl-vfo-callsign.asl-vfo-standby {
+  font-size: 0.94rem !important;
+  letter-spacing: 0.6px !important;
+  text-shadow: 0 0 10px rgba(245, 158, 11, 0.45) !important;
+}
+
 .asl-vfo-sep {
   color: rgba(148, 163, 184, 0.6) !important;
   font-weight: 700 !important;
@@ -30916,6 +31072,65 @@ svg[src*="flags/"],
   margin-right: 3px !important;
   vertical-align: middle !important;
   filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.4)) !important;
+}
+
+/* ASL VFO Horizontal Marquee & Soft Masking */
+.card-net-allstar .callsign-display.has-asl-marquee {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 6px, #000 calc(100% - 6px), transparent 100%) !important;
+  mask-image: linear-gradient(90deg, transparent 0%, #000 6px, #000 calc(100% - 6px), transparent 100%) !important;
+}
+
+.asl-vfo-marquee-track {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+}
+
+.asl-vfo-marquee-track.asl-marquee-active {
+  justify-content: flex-start !important;
+}
+
+.asl-vfo-marquee-inner {
+  display: inline-flex !important;
+  align-items: center !important;
+  white-space: nowrap !important;
+  will-change: transform !important;
+}
+
+.asl-vfo-marquee-item {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  white-space: nowrap !important;
+}
+
+.asl-vfo-marquee-sep {
+  display: inline-block !important;
+  color: #38bdf8 !important;
+  opacity: 0.75 !important;
+  white-space: nowrap !important;
+  user-select: none !important;
+}
+
+.asl-vfo-marquee-track.asl-marquee-active .asl-vfo-marquee-inner {
+  animation: aslInfiniteMarquee var(--asl-marquee-dur, 10s) linear infinite !important;
+}
+
+.asl-vfo-marquee-track.asl-marquee-active:hover .asl-vfo-marquee-inner {
+  animation-play-state: paused !important;
+}
+
+@keyframes aslInfiniteMarquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
 }
 
 /* Task 3 & 4: Top toolbar of AllStar framed panel in STRICTLY 1 ROW (Divider removed, halved gaps) */
@@ -31792,21 +32007,11 @@ svg[src*="flags/"],
 }
 
 
-/* Talking node in ASL RX (keyed: true) */
+/* Talking node in ASL RX (keyed: true) — bright blue glow disabled on memory cards */
 .card-net-allstar .btn-allstar-node.asl-node-rx-talking,
 .radio-container[data-network-type="allstar"] .btn-allstar-node.asl-node-rx-talking {
-  animation: asl-node-talking-pulse 0.65s ease-in-out infinite alternate !important;
-  z-index: 3 !important;
-}
-@keyframes asl-node-talking-pulse {
-  0% {
-    filter: brightness(1) saturate(1);
-    box-shadow: inset 0 0 6px rgba(56, 189, 248, 0.25) !important;
-  }
-  100% {
-    filter: brightness(1.95) saturate(2.2);
-    box-shadow: inset 0 0 16px rgba(56, 189, 248, 0.8), inset 0 0 22px rgba(255, 255, 255, 0.4) !important;
-  }
+  animation: none !important;
+  filter: none !important;
 }
 
 /* External / incoming node in dynamic matrix (lilac accent) */
@@ -31955,22 +32160,48 @@ svg[src*="flags/"],
 
 /* Empty Node Button Styling */
 .btn-allstar-node.asl-node-empty {
-  opacity: 0.6 !important;
+  opacity: 0.45 !important;
   border-style: dashed !important;
-  border-color: rgba(148, 163, 184, 0.35) !important;
-  background: rgba(15, 23, 42, 0.35) !important;
+  border-color: rgba(148, 163, 184, 0.22) !important;
+  background: rgba(15, 23, 42, 0.25) !important;
+  transition: all 0.18s ease !important;
 }
 
 .btn-allstar-node.asl-node-empty:hover {
-  opacity: 1 !important;
-  border-color: #38bdf8 !important;
-  background: rgba(56, 189, 248, 0.15) !important;
+  opacity: 0.95 !important;
+  border-color: rgba(56, 189, 248, 0.6) !important;
+  background: rgba(56, 189, 248, 0.12) !important;
+}
+
+.btn-allstar-node.asl-node-empty .asl-btn-flag {
+  opacity: 0.40 !important;
+  filter: grayscale(80%) !important;
+  transition: all 0.15s ease !important;
+}
+
+.btn-allstar-node.asl-node-empty:hover .asl-btn-flag {
+  opacity: 0.90 !important;
+  filter: none !important;
 }
 
 .btn-allstar-node.asl-node-empty .asl-btn-num {
   font-weight: 500 !important;
   font-size: 0.68rem !important;
+  color: #64748b !important;
+  transition: color 0.15s ease !important;
+}
+
+.btn-allstar-node.asl-node-empty:hover .asl-btn-num {
   color: #94a3b8 !important;
+}
+
+.btn-allstar-node.asl-node-empty .asl-btn-desc {
+  color: #475569 !important;
+  transition: color 0.15s ease !important;
+}
+
+.btn-allstar-node.asl-node-empty:hover .asl-btn-desc {
+  color: #64748b !important;
 }
 
 /* AllStar Matrix Management Modal Dialog Styles */
@@ -32086,7 +32317,6 @@ svg[src*="flags/"],
 .asl-modal-btn:hover {
   background: rgba(56, 189, 248, 0.15);
   border-color: #38bdf8;
-  transform: translateY(-1px);
 }
 
 .asl-btn-action-icon {
@@ -32352,7 +32582,6 @@ svg[src*="flags/"],
 }
 
 .asl-picker-cell:hover {
-  transform: translateY(-1px);
   border-color: #38bdf8;
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3), 0 0 6px rgba(56, 189, 248, 0.2);
 }
@@ -32821,6 +33050,53 @@ svg[src*="flags/"],
 
 .radio-container:not(.card-bm-disconnected) .volume-slider-v {
   accent-color: #ff6700 !important;
+}
+
+/* Hotspot Volume Boost Active State (High Specificity Override) */
+.radio-container:not(.card-bm-disconnected) .vertical-volume-strip.vol-boosted,
+.vertical-volume-strip.vol-boosted {
+  border-color: #ff1744 !important;
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.8), 0 0 10px rgba(255, 23, 68, 0.45) !important;
+}
+
+.radio-container:not(.card-bm-disconnected) .vertical-volume-strip.vol-boosted::before,
+.vertical-volume-strip.vol-boosted::before {
+  background: linear-gradient(90deg, transparent, rgba(255, 23, 68, 0.85), transparent) !important;
+}
+
+.radio-container:not(.card-bm-disconnected) .vertical-volume-strip.vol-boosted .volume-val-v,
+.vertical-volume-strip.vol-boosted .volume-val-v {
+  color: #ff1744 !important;
+  text-shadow: 0 0 6px rgba(255, 23, 68, 0.8) !important;
+}
+
+.radio-container:not(.card-bm-disconnected) .vertical-volume-strip.vol-boosted .volume-slider-v-wrap::before,
+.vertical-volume-strip.vol-boosted .volume-slider-v-wrap::before {
+  border-color: rgba(255, 23, 68, 0.75) !important;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.85), 0 0 6px rgba(255, 23, 68, 0.3) !important;
+}
+
+.radio-container:not(.card-bm-disconnected) .vertical-volume-strip.vol-boosted .volume-slider-v-wrap::after,
+.vertical-volume-strip.vol-boosted .volume-slider-v-wrap::after {
+  background: #ff1744 !important;
+  box-shadow: 0 0 8px rgba(255, 23, 68, 0.95), 0 0 16px rgba(255, 23, 68, 0.5) !important;
+}
+
+.radio-container:not(.card-bm-disconnected) .vertical-volume-strip.vol-boosted .volume-slider-v,
+.vertical-volume-strip.vol-boosted .volume-slider-v {
+  accent-color: #ff1744 !important;
+}
+
+.radio-container:not(.card-bm-disconnected) .vertical-volume-strip.vol-boosted .volume-slider-v::-webkit-slider-thumb,
+.vertical-volume-strip.vol-boosted .volume-slider-v::-webkit-slider-thumb {
+  background: #ff1744 !important;
+  box-shadow: 0 0 10px rgba(255, 23, 68, 1), 0 0 18px rgba(255, 23, 68, 0.6) !important;
+}
+
+.radio-container:not(.card-bm-disconnected) .vertical-volume-strip.vol-boosted .volume-slider-v::-moz-range-thumb,
+.vertical-volume-strip.vol-boosted .volume-slider-v::-moz-range-thumb {
+  background: #ff1744 !important;
+  box-shadow: 0 0 10px rgba(255, 23, 68, 1), 0 0 18px rgba(255, 23, 68, 0.6) !important;
 }
 
 /* 5. Quick TG Dial Box Frame */
@@ -33328,7 +33604,13 @@ body.is-hotspot-dragging .radio-header {
   transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1) !important;
 }
 
-/* Proxdmr Fast Toast Theme Rules */
+/* Proxdmr Fast Toast Theme Rules & Strict 10px Border Radius */
+.proxdmr-toast-item,
+.proxdmr-toast-container .proxdmr-toast-item,
+#proxdmrCenterHudToast {
+  border-radius: 10px !important;
+}
+
 .proxdmr-toast-item {
   background: #ffffff;
   color: #000000;
@@ -33948,15 +34230,15 @@ body.is-hotspot-dragging .radio-header {
 
 /* Part 1: AllStarLink Matrix 5x4 Roles (Sapphire Blue Node vs Purple DTMF) */
 /* 1. Базовый сапфирово-голубой фон ТОЛЬКО для карточек ХН в покое (не подключенных и не в процессе подключения) */
-:not([data-theme="light"]) .btn-allstar-node:not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting),
-[data-theme="dark"] .btn-allstar-node:not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting) {
+:not([data-theme="light"]) .btn-allstar-node:not(.asl-dash-tile):not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting),
+[data-theme="dark"] .btn-allstar-node:not(.asl-dash-tile):not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting) {
   background: linear-gradient(180deg, rgba(22, 58, 98, 0.92) 0%, rgba(13, 36, 66, 0.96) 100%) !important;
   border: 1px solid rgba(56, 189, 248, 0.38) !important;
   box-shadow: inset 0 1px 0 rgba(125, 211, 252, 0.16), 0 2px 5px rgba(0, 0, 0, 0.35);
 }
 
-:not([data-theme="light"]) .btn-allstar-node:not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting):hover,
-[data-theme="dark"] .btn-allstar-node:not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting):hover {
+:not([data-theme="light"]) .btn-allstar-node:not(.asl-dash-tile):not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting):hover,
+[data-theme="dark"] .btn-allstar-node:not(.asl-dash-tile):not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting):hover {
   background: linear-gradient(180deg, rgba(28, 74, 124, 0.96) 0%, rgba(17, 47, 84, 0.98) 100%) !important;
   border-color: rgba(56, 189, 248, 0.65) !important;
 }
@@ -34370,17 +34652,17 @@ body.is-hotspot-dragging .radio-header {
 }
 
 /* 5. Matrix Grid Node Tiles (Default unlinked nodes in light theme) */
-[data-theme="light"] .card-net-allstar .btn-allstar-node:not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting),
-[data-theme="light"] .radio-container[data-network-type="allstar"] .btn-allstar-node:not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting),
-[data-theme="light"] .btn-allstar-node:not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting) {
+[data-theme="light"] .card-net-allstar .btn-allstar-node:not(.asl-dash-tile):not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting),
+[data-theme="light"] .radio-container[data-network-type="allstar"] .btn-allstar-node:not(.asl-dash-tile):not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting),
+[data-theme="light"] .btn-allstar-node:not(.asl-dash-tile):not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting) {
   background: linear-gradient(180deg, #ffffff 0%, #f0f9ff 100%) !important;
   border: 1.5px solid rgba(2, 132, 199, 0.50) !important;
   box-shadow: 0 1px 3px rgba(2, 132, 199, 0.14), inset 0 1px 0 #ffffff !important;
 }
 
-[data-theme="light"] .card-net-allstar .btn-allstar-node:not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting):hover,
-[data-theme="light"] .radio-container[data-network-type="allstar"] .btn-allstar-node:not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting):hover,
-[data-theme="light"] .btn-allstar-node:not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting):hover {
+[data-theme="light"] .card-net-allstar .btn-allstar-node:not(.asl-dash-tile):not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting):hover,
+[data-theme="light"] .radio-container[data-network-type="allstar"] .btn-allstar-node:not(.asl-dash-tile):not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting):hover,
+[data-theme="light"] .btn-allstar-node:not(.asl-dash-tile):not(.asl-node-empty):not(.asl-node-role-dtmf):not(.asl-node-external-lilac):not(.asl-node-linked-monitor):not(.asl-node-linked-tx):not(.asl-node-connecting):hover {
   background: linear-gradient(180deg, #f0f9ff 0%, #e0f2fe 100%) !important;
   border-color: #0284c7 !important;
   box-shadow: 0 2px 7px rgba(2, 132, 199, 0.30) !important;
@@ -34561,9 +34843,9 @@ body.is-hotspot-dragging .radio-header {
 /* 9. Empty Matrix Tiles in Light Theme */
 [data-theme="light"] .card-net-allstar .btn-allstar-node.asl-node-empty,
 [data-theme="light"] .radio-container[data-network-type="allstar"] .btn-allstar-node.asl-node-empty {
-  opacity: 0.90 !important;
-  border: 1.5px dashed rgba(2, 132, 199, 0.45) !important;
-  background: rgba(240, 249, 255, 0.70) !important;
+  opacity: 0.55 !important;
+  border: 1.5px dashed rgba(148, 163, 184, 0.40) !important;
+  background: rgba(241, 245, 249, 0.50) !important;
   box-shadow: none !important;
 }
 
@@ -34571,20 +34853,30 @@ body.is-hotspot-dragging .radio-header {
 [data-theme="light"] .radio-container[data-network-type="allstar"] .btn-allstar-node.asl-node-empty:hover {
   opacity: 1 !important;
   border-color: #0284c7 !important;
-  background: rgba(224, 242, 254, 0.90) !important;
+  background: rgba(224, 242, 254, 0.85) !important;
   box-shadow: 0 2px 6px rgba(2, 132, 199, 0.2) !important;
+}
+
+[data-theme="light"] .card-net-allstar .btn-allstar-node.asl-node-empty .asl-btn-flag {
+  opacity: 0.40 !important;
+  filter: grayscale(80%) !important;
+}
+
+[data-theme="light"] .card-net-allstar .btn-allstar-node.asl-node-empty:hover .asl-btn-flag {
+  opacity: 0.90 !important;
+  filter: none !important;
 }
 
 [data-theme="light"] .card-net-allstar .btn-allstar-node.asl-node-empty .asl-btn-num,
 [data-theme="light"] .radio-container[data-network-type="allstar"] .btn-allstar-node.asl-node-empty .asl-btn-num {
-  color: #0284c7 !important;
-  font-weight: 700 !important;
+  color: #64748b !important;
+  font-weight: 600 !important;
 }
 
 [data-theme="light"] .card-net-allstar .btn-allstar-node.asl-node-empty .asl-btn-desc,
 [data-theme="light"] .radio-container[data-network-type="allstar"] .btn-allstar-node.asl-node-empty .asl-btn-desc {
-  color: #64748b !important;
-  font-weight: 600 !important;
+  color: #94a3b8 !important;
+  font-weight: 500 !important;
 }
 
 /* 10. Matrix Move Mode in Light Theme */
@@ -35598,8 +35890,8 @@ body.is-hotspot-dragging .radio-header {
   justify-content: center !important;
   height: 26px !important;
   min-height: 26px !important;
-  min-width: 28px !important;
-  padding: 0 6px !important;
+  min-width: 30px !important;
+  padding: 0 4px !important;
   background: rgba(30, 41, 59, 0.85) !important;
   border: 1px solid rgba(56, 189, 248, 0.55) !important;
   color: #38bdf8 !important;
@@ -35626,8 +35918,8 @@ body.is-hotspot-dragging .radio-header {
   justify-content: center !important;
   height: 26px !important;
   min-height: 26px !important;
-  min-width: 28px !important;
-  padding: 0 6px !important;
+  min-width: 30px !important;
+  padding: 0 4px !important;
   background: linear-gradient(180deg, #ffffff 0%, #f0f9ff 100%) !important;
   border: 1.5px solid #0284c7 !important;
   color: #0369a1 !important;
@@ -35647,24 +35939,64 @@ body.is-hotspot-dragging .radio-header {
 }
 
 .btn-allstar-dice .asl-dice-svg {
-  width: 15px;
-  height: 15px;
+  width: 22px;
+  height: 22px;
   display: block;
   transform-origin: center center;
 }
 
+.btn-allstar-dice .asl-dice-svg .dice-dot {
+  transform-origin: center center;
+  transition: opacity 0.12s ease;
+}
+
 .btn-allstar-dice.dice-rolling {
   pointer-events: none !important;
-  opacity: 0.85 !important;
+  opacity: 0.95 !important;
 }
 
+/* Кубик строго неподвижен (никаких прыжков, масштабирований и вибраций) */
 .btn-allstar-dice.dice-rolling .asl-dice-svg {
-  animation: aslDiceRollSpin 0.55s linear infinite;
+  transform: none !important;
+  animation: none !important;
 }
 
-@keyframes aslDiceRollSpin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+/* Хаотичное перемигивание точек (замедлено ровно в 2 раза) */
+.btn-allstar-dice.dice-rolling .dice-dot.dot-1 {
+  animation: diceBlinkA 0.36s ease-in-out infinite alternate;
+}
+.btn-allstar-dice.dice-rolling .dice-dot.dot-2 {
+  animation: diceBlinkB 0.46s ease-in-out infinite alternate;
+}
+.btn-allstar-dice.dice-rolling .dice-dot.dot-3 {
+  animation: diceBlinkC 0.28s ease-in-out infinite alternate;
+}
+.btn-allstar-dice.dice-rolling .dice-dot.dot-4 {
+  animation: diceBlinkD 0.54s ease-in-out infinite alternate;
+}
+.btn-allstar-dice.dice-rolling .dice-dot.dot-5 {
+  animation: diceBlinkE 0.38s ease-in-out infinite alternate;
+}
+
+@keyframes diceBlinkA {
+  0%, 20%   { opacity: 0.15; }
+  60%, 100% { opacity: 1; }
+}
+@keyframes diceBlinkB {
+  0%, 35%   { opacity: 1; }
+  65%, 100% { opacity: 0.1; }
+}
+@keyframes diceBlinkC {
+  0%, 25%   { opacity: 0.2; }
+  70%, 100% { opacity: 1; }
+}
+@keyframes diceBlinkD {
+  0%, 45%   { opacity: 1; }
+  80%, 100% { opacity: 0.15; }
+}
+@keyframes diceBlinkE {
+  0%, 30%   { opacity: 0.1; }
+  75%, 100% { opacity: 1; }
 }
 
 /* =========================================================================
@@ -35801,3 +36133,902 @@ body.is-hotspot-dragging .radio-header {
   from { width: 0; }
   to { width: 100%; }
 }
+
+/* 10-Band EQ Graphic Horizontal Rack */
+.eq10-rack-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  background: rgba(13, 17, 23, 0.7);
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 10px 6px 8px 6px;
+  margin-top: 8px;
+}
+
+.eq10-band-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 0;
+  min-width: 0;
+  user-select: none;
+}
+
+.eq10-val-lbl {
+  font-family: monospace;
+  font-size: 0.72rem;
+  font-weight: bold;
+  color: #58a6ff;
+}
+
+.eq10-slider {
+  writing-mode: bt-lr; /* IE/Edge */
+  -webkit-appearance: slider-vertical; /* WebKit */
+  width: 22px;
+  height: 110px;
+  cursor: pointer;
+}
+
+.eq10-freq-lbl {
+  font-size: 0.72rem;
+  color: #8b949e;
+}
+
+.secret-trigger-lbl {
+  color: #79c0ff;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.btn-mini-reset {
+  background: #21262d;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.btn-mini-reset:hover {
+  background: #30363d;
+  color: #58a6ff;
+}
+
+/* --- Audio TX: 2-Column Layout (Left: Mic Select + Mic Meter, Right: Full-Height PARROT TEST Button) --- */
+.tx-mic-test-row {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: stretch !important;
+  gap: 10px !important;
+  margin-top: 10px !important;
+}
+
+.tx-mic-left-col {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn-parrot-test {
+  flex: 0 0 auto;
+  width: 112px;
+  min-height: 84px;
+  align-self: stretch;
+  padding: 6px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #0d3c68;
+  border: 1.5px solid #1f6feb;
+  border-radius: 10px !important;
+  color: #ffffff;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.btn-parrot-test:hover {
+  background: #124b82;
+  border-color: #388bfd;
+}
+
+.btn-parrot-test .parrot-btn-label {
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1.18;
+  letter-spacing: 0.04em;
+  text-align: center;
+  text-transform: uppercase;
+  color: #ffffff;
+  display: inline-block;
+  pointer-events: none;
+}
+
+.btn-parrot-test.recording {
+  background: #da3633 !important;
+  border-color: #f85149 !important;
+  box-shadow: 0 0 14px rgba(218, 54, 51, 0.85) !important;
+  animation: pulse-parrot-red 1.0s infinite ease-in-out;
+}
+
+.btn-parrot-test.waiting {
+  background: #491212 !important;
+  border-color: #7f1d1d !important;
+  color: #e2e8f0 !important;
+  box-shadow: none !important;
+  cursor: wait;
+}
+
+.btn-parrot-test.playing {
+  background: #238636 !important;
+  border-color: #2ea043 !important;
+  box-shadow: 0 0 14px rgba(35, 134, 54, 0.85) !important;
+  animation: pulse-parrot-deep-green 1.5s infinite ease-in-out;
+}
+
+@keyframes pulse-parrot-red {
+  0% { box-shadow: 0 0 4px rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 14px rgba(239, 68, 68, 0.9); }
+  100% { box-shadow: 0 0 4px rgba(239, 68, 68, 0.4); }
+}
+
+@keyframes pulse-parrot-deep-green {
+  0% { box-shadow: 0 0 4px rgba(46, 125, 50, 0.35); }
+  50% { box-shadow: 0 0 14px rgba(46, 125, 50, 0.75); }
+  100% { box-shadow: 0 0 4px rgba(46, 125, 50, 0.35); }
+}
+
+.tx-mic-meter-box {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.tx-meter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.68rem;
+  color: #8b949e;
+  margin-bottom: 4px;
+  font-family: monospace;
+}
+
+.tx-meter-track-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tx-meter-track {
+  flex: 1;
+  position: relative;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.tx-meter-bar {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, #2ea043 0%, #3fb950 65%, #d29922 85%, #f85149 100%);
+  border-radius: 2px;
+  transition: none !important;
+}
+
+.tx-meter-bar.is-clipping {
+  background: #f85149 !important;
+  box-shadow: 0 0 8px rgba(248, 81, 73, 0.8);
+}
+
+.tx-clip-led {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  font-weight: 800;
+  font-family: monospace;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #6e7681;
+  background: #21262d;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.1s ease;
+  user-select: none;
+}
+
+.tx-clip-led.active,
+.tx-meter-clip.active {
+  color: #ffffff !important;
+  background: #f85149 !important;
+  border-color: #ff5555 !important;
+  box-shadow: 0 0 10px rgba(248, 81, 73, 0.9) !important;
+}
+
+@media (max-width: 600px) {
+  .tx-mic-test-row {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }
+
+  .tx-mic-left-col {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+  }
+
+  .btn-parrot-test {
+    flex: 0 0 auto !important;
+    width: 96px !important;
+  }
+
+  .btn-parrot-test .parrot-btn-label {
+    font-size: 0.92rem !important;
+  }
+}
+
+/* --- Скрытое меню экспертных настроек микрофона --- */
+.audio-tx-expert-drawer {
+  display: none;
+  background: rgba(13, 17, 23, 0.95);
+  border: 1px dashed rgba(218, 54, 51, 0.5);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  animation: fadeIn 0.2s ease-in-out;
+}
+.audio-tx-expert-drawer.active {
+  display: block;
+}
+.expert-drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #f85149;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+.expert-drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.8rem;
+}
+.icon-btn-micro {
+  background: none;
+  border: none;
+  color: #8b949e;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.icon-btn-micro:hover {
+  color: #f0f6fc;
+}
+
+/* --- 3-Полосный Эквалайзер Передачи (TX 3-Band EQ) --- */
+.tx-eq-container {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  background: rgba(13, 17, 23, 0.4);
+  border: 1px solid rgba(48, 54, 61, 0.6);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.tx-eq-strips-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-around;
+  flex: 1;
+  gap: 10px;
+}
+.tx-eq-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  width: 54px;
+}
+.tx-eq-val-badge {
+  font-size: 0.70rem;
+  font-weight: 700;
+  color: #58a6ff;
+  background: rgba(56, 139, 253, 0.15);
+  padding: 1px 4px;
+  border-radius: 3px;
+  min-width: 36px;
+  text-align: center;
+  font-family: monospace;
+}
+.tx-eq-v-slider {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 22px;
+  height: 75px;
+  margin: 6px 0;
+  cursor: pointer;
+  accent-color: #1f6feb;
+}
+.tx-eq-freq-label {
+  font-size: 0.70rem;
+  color: #8b949e;
+  font-weight: 600;
+}
+.tx-eq-presets-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 4px;
+  width: 95px;
+  border-left: 1px solid rgba(48, 54, 61, 0.6);
+  padding-left: 10px;
+}
+.btn-tx-eq-preset {
+  background: rgba(33, 38, 45, 0.8);
+  border: 1px solid rgba(48, 54, 61, 0.8);
+  color: #8b949e;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 3px 6px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+.btn-tx-eq-preset:hover {
+  color: #c9d1d9;
+  border-color: #8b949e;
+}
+.btn-tx-eq-preset.active {
+  background: #1f6feb !important;
+  color: #ffffff !important;
+  border-color: #388bfd !important;
+}
+
+/* --- ASL Disconnected Placeholder in Ping Sparkline --- */
+.asl-ping-disconnected-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #6e7681;
+  font-family: monospace;
+  font-size: 0.72rem;
+  font-style: italic;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* --- Bluetooth Mic Controls & Browser Mic Selector --- */
+.tx-mic-options-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 0;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.tx-apk-bt-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+}
+.tx-browser-mic-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 10px;
+}
+.tx-browser-mic-label {
+  font-size: 0.86rem;
+  font-weight: 500;
+  color: #f0f6fc;
+  white-space: nowrap;
+}
+.tx-browser-mic-select {
+  flex: 1;
+  min-width: 0;
+  background: #1f7a3a;
+  color: #ffffff;
+  border: 1px solid #2ea043;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+.tx-browser-mic-select option {
+  background: #161b22;
+  color: #f0f6fc;
+}
+.tx-browser-mic-select:focus {
+  border-color: #3fb950;
+  box-shadow: 0 0 0 2px rgba(46, 160, 67, 0.25);
+}
+.tx-bt-device-badge {
+  font-size: 0.74rem;
+  color: #58a6ff;
+  background: rgba(56, 139, 253, 0.15);
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(56, 139, 253, 0.3);
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Compact Bluetooth Mic Selector Modal --- */
+.bt-mic-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10050;
+  backdrop-filter: blur(4px);
+}
+.bt-mic-modal-content {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  width: 90%;
+  max-width: 360px;
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.6);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bt-mic-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #21262d;
+  padding-bottom: 8px;
+}
+.bt-mic-modal-header h4 {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #f0f6fc;
+}
+.bt-mic-subtitle {
+  font-size: 0.82rem;
+  color: #8b949e;
+  margin: 0 0 10px 0;
+  line-height: 1.35;
+}
+.bt-mic-device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+.bt-mic-device-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.bt-mic-device-item:hover {
+  background: #1c2128;
+  border-color: #58a6ff;
+}
+.bt-mic-device-item.selected {
+  background: rgba(31, 111, 235, 0.15);
+  border-color: #1f6feb;
+}
+.bt-mic-device-name {
+  font-size: 0.85rem;
+  color: #c9d1d9;
+  font-weight: 500;
+  flex: 1;
+}
+.bt-mic-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid #21262d;
+  padding-top: 10px;
+}
+
+/* =========================================================================
+   AllStarLink "Dashboard node" Paired Button & In-Card 5x5 Deep Amber Matrix
+   ========================================================================= */
+.control-pair-btn.allstar-dash-pair {
+  display: inline-flex;
+  align-items: stretch;
+  background: linear-gradient(180deg, #78350f 0%, #451a03 100%);
+  border: 1px solid #b45309;
+  border-radius: 2px !important;
+  overflow: hidden;
+  height: 22px;
+  transition: all 0.18s ease;
+}
+.card-net-allstar .control-pair-btn.allstar-dash-pair {
+  display: inline-flex !important;
+}
+.control-pair-btn.allstar-dash-pair.dash-open {
+  background: linear-gradient(180deg, #92400e 0%, #5c2406 100%);
+  border-color: #f59e0b;
+  box-shadow: 0 0 9px rgba(245, 158, 11, 0.45), inset 0 0 6px rgba(245, 158, 11, 0.22);
+}
+.btn-asl-dash-trigger {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  background: transparent;
+  border: none;
+  color: #fef3c7;
+  font-size: 0.66rem;
+  font-weight: 700;
+  padding: 0 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.btn-asl-dash-trigger:hover {
+  background: rgba(245, 158, 11, 0.22);
+  color: #ffffff;
+}
+.control-pair-btn.allstar-dash-pair.dash-open .btn-asl-dash-trigger {
+  color: #fcd34d;
+  text-shadow: 0 0 6px rgba(245, 158, 11, 0.55);
+}
+.asl-dash-auto-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(45, 18, 4, 0.88);
+  border-left: 1px solid rgba(245, 158, 11, 0.38);
+  padding: 0 5px;
+  height: 100%;
+  cursor: pointer;
+  user-select: none;
+}
+.asl-dash-auto-wrap:hover {
+  background: rgba(92, 36, 6, 0.92);
+}
+.asl-dash-auto-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  height: 100%;
+}
+.chk-asl-dash-auto {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #d97706;
+}
+
+/* Light Theme for .allstar-dash-pair */
+[data-theme="light"] .control-pair-btn.allstar-dash-pair {
+  background: linear-gradient(180deg, #92400e 0%, #652b09 100%) !important;
+  border: 1px solid #b45309 !important;
+}
+[data-theme="light"] .control-pair-btn.allstar-dash-pair.dash-open {
+  background: linear-gradient(180deg, #b45309 0%, #78350f 100%) !important;
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 8px rgba(217, 119, 6, 0.45) !important;
+}
+[data-theme="light"] .btn-asl-dash-trigger {
+  color: #fffbeb !important;
+}
+[data-theme="light"] .asl-dash-auto-wrap {
+  background: rgba(69, 26, 3, 0.9) !important;
+  border-left: 1px solid rgba(251, 191, 36, 0.4) !important;
+}
+
+/* --- In-Card 4x5 (4 cols x 5 rows) Scrollable Deep Amber Dashboard Mode --- */
+.card-net-allstar .asl-matrix-container.is-dash-view,
+.radio-container[data-network-type="allstar"] .asl-matrix-container.is-dash-view {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.card-net-allstar .asl-matrix-container.is-dash-view > .asl-pages-viewport,
+.radio-container[data-network-type="allstar"] .asl-matrix-container.is-dash-view > .asl-pages-viewport {
+  display: none !important;
+}
+
+.card-net-allstar .asl-dash-grid-viewport,
+.radio-container[data-network-type="allstar"] .asl-dash-grid-viewport {
+  display: none !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.card-net-allstar .asl-matrix-container.is-dash-view > .asl-dash-grid-viewport,
+.radio-container[data-network-type="allstar"] .asl-matrix-container.is-dash-view > .asl-dash-grid-viewport {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  grid-auto-rows: calc((100% - 12px) / 5) !important;
+  gap: 3px !important;
+  flex: 1 1 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  touch-action: pan-y !important;
+  overscroll-behavior: contain !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(245, 158, 11, 0.45) rgba(45, 18, 4, 0.5) !important;
+  align-content: start !important;
+}
+
+.card-net-allstar .asl-dash-grid-viewport::-webkit-scrollbar,
+.radio-container[data-network-type="allstar"] .asl-dash-grid-viewport::-webkit-scrollbar {
+  width: 4px !important;
+}
+.card-net-allstar .asl-dash-grid-viewport::-webkit-scrollbar-track,
+.radio-container[data-network-type="allstar"] .asl-dash-grid-viewport::-webkit-scrollbar-track {
+  background: rgba(45, 18, 4, 0.45) !important;
+  border-radius: 2px !important;
+}
+.card-net-allstar .asl-dash-grid-viewport::-webkit-scrollbar-thumb,
+.radio-container[data-network-type="allstar"] .asl-dash-grid-viewport::-webkit-scrollbar-thumb {
+  background: rgba(245, 158, 11, 0.5) !important;
+  border-radius: 2px !important;
+}
+
+/* Participant Tile in 4x5 Translucent Deep Amber Matrix */
+.card-net-allstar .btn-allstar-node.asl-dash-tile,
+.radio-container[data-network-type="allstar"] .btn-allstar-node.asl-dash-tile {
+  background: linear-gradient(180deg, rgba(146, 64, 14, 0.54) 0%, rgba(92, 36, 6, 0.66) 100%) !important;
+  border: 1px solid rgba(245, 158, 11, 0.42) !important;
+  border-radius: 5px !important;
+  padding: 2px 3px !important;
+  box-shadow: inset 0 1px 0 rgba(251, 191, 36, 0.14), 0 1px 2px rgba(0, 0, 0, 0.32) !important;
+  cursor: pointer !important;
+  position: relative !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  align-items: stretch !important;
+}
+
+.card-net-allstar .btn-allstar-node.asl-dash-tile:hover,
+.radio-container[data-network-type="allstar"] .btn-allstar-node.asl-dash-tile:hover {
+  background: linear-gradient(180deg, rgba(180, 83, 9, 0.68) 0%, rgba(120, 53, 15, 0.78) 100%) !important;
+  border-color: rgba(251, 191, 36, 0.72) !important;
+}
+
+.card-net-allstar .asl-dash-tile .asl-btn-header,
+.radio-container[data-network-type="allstar"] .asl-dash-tile .asl-btn-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 3px !important;
+  width: 100% !important;
+  height: 13px !important;
+  min-height: 13px !important;
+  max-height: 13px !important;
+  line-height: 13px !important;
+  overflow: hidden !important;
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+.card-net-allstar .asl-dash-tile .asl-btn-flag,
+.radio-container[data-network-type="allstar"] .asl-dash-tile .asl-btn-flag {
+  font-size: 0.72rem !important;
+  line-height: 1 !important;
+  flex-shrink: 0 !important;
+}
+
+.card-net-allstar .asl-dash-tile .asl-btn-num,
+.radio-container[data-network-type="allstar"] .asl-dash-tile .asl-btn-num {
+  font-size: 0.70rem !important;
+  font-weight: 800 !important;
+  color: #ffffff !important;
+  letter-spacing: 0.1px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  text-align: left !important;
+}
+
+.card-net-allstar .asl-dash-tile .asl-btn-footer,
+.radio-container[data-network-type="allstar"] .asl-dash-tile .asl-btn-footer {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  justify-content: center !important;
+  width: 100% !important;
+  height: 17px !important;
+  min-height: 17px !important;
+  max-height: 17px !important;
+  gap: 0px !important;
+  overflow: hidden !important;
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+.card-net-allstar .asl-dash-tile .asl-dash-desc-line,
+.radio-container[data-network-type="allstar"] .asl-dash-tile .asl-dash-desc-line {
+  display: block !important;
+  width: 100% !important;
+  font-size: 0.54rem !important;
+  font-weight: 500 !important;
+  line-height: 8.5px !important;
+  height: 8.5px !important;
+  color: #fde68a !important;
+  text-align: left !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  opacity: 0.94 !important;
+}
+
+.card-net-allstar .asl-dash-tile .asl-dash-desc-line.asl-dash-desc-wrap,
+.radio-container[data-network-type="allstar"] .asl-dash-tile .asl-dash-desc-line.asl-dash-desc-wrap {
+  display: -webkit-box !important;
+  -webkit-line-clamp: 2 !important;
+  -webkit-box-orient: vertical !important;
+  white-space: normal !important;
+  height: auto !important;
+  max-height: 17px !important;
+  line-height: 8.5px !important;
+  word-break: break-word !important;
+}
+
+/* 1. Active Transmitting Speaker (0.8 Hz = 1.25s cycle emerald-green background blink via ::before overlay) */
+@keyframes asl-dash-emerald-blink-08hz {
+  0%, 100% {
+    opacity: 0.06;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.card-net-allstar .btn-allstar-node.asl-dash-tile.asl-dash-tile-talking,
+.radio-container[data-network-type="allstar"] .btn-allstar-node.asl-dash-tile.asl-dash-tile-talking {
+  border-color: #34d399 !important;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.55), inset 0 0 6px rgba(52, 211, 153, 0.35) !important;
+  z-index: 2 !important;
+}
+
+.card-net-allstar .btn-allstar-node.asl-dash-tile.asl-dash-tile-talking::before,
+.radio-container[data-network-type="allstar"] .btn-allstar-node.asl-dash-tile.asl-dash-tile-talking::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  border-radius: inherit !important;
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.94) 0%, rgba(5, 150, 105, 0.98) 100%) !important;
+  box-shadow: inset 0 1px 0 rgba(167, 243, 208, 0.45) !important;
+  z-index: 0 !important;
+  pointer-events: none !important;
+  animation: asl-dash-emerald-blink-08hz 1.25s ease-in-out infinite !important;
+}
+
+.card-net-allstar .btn-allstar-node.asl-dash-tile.asl-dash-tile-talking .asl-btn-num,
+.radio-container[data-network-type="allstar"] .btn-allstar-node.asl-dash-tile.asl-dash-tile-talking .asl-btn-num,
+.card-net-allstar .btn-allstar-node.asl-dash-tile.asl-dash-tile-talking .asl-dash-desc-line,
+.radio-container[data-network-type="allstar"] .btn-allstar-node.asl-dash-tile.asl-dash-tile-talking .asl-dash-desc-line {
+  color: #ecfdf5 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45) !important;
+}
+
+/* 2. Bottom Green Strip (2.5px) for Previously Heard / Active Conversation Participants */
+.card-net-allstar .btn-allstar-node.asl-dash-tile.asl-dash-tile-heard::after,
+.radio-container[data-network-type="allstar"] .btn-allstar-node.asl-dash-tile.asl-dash-tile-heard::after,
+.card-net-allstar .btn-allstar-node.asl-dash-tile.asl-dash-tile-talking::after,
+.radio-container[data-network-type="allstar"] .btn-allstar-node.asl-dash-tile.asl-dash-tile-talking::after {
+  content: "" !important;
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  height: 2.5px !important;
+  background: linear-gradient(90deg, #22c55e 0%, #4ade80 50%, #22c55e 100%) !important;
+  box-shadow: 0 -1px 4px rgba(34, 197, 94, 0.65) !important;
+  z-index: 2 !important;
+  pointer-events: none !important;
+}
+
+/* Empty / Not Connected Message inside 5x5 Dashboard Viewport */
+.asl-dash-grid-empty {
+  grid-column: 1 / -1 !important;
+  grid-row: 1 / span 5 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  padding: 12px 16px !important;
+  color: #fde68a !important;
+  font-size: 0.74rem !important;
+  line-height: 1.4 !important;
+  opacity: 0.88 !important;
+}
+
+/* Notch Indicator in Dashboard Mode */
+.asl-notch-dash-badge {
+  display: none;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: #fbbf24;
+  letter-spacing: 0.3px;
+  pointer-events: none;
+}
+.card-net-allstar .asl-slider-container.is-dash-mode .asl-notch-pages,
+.radio-container[data-network-type="allstar"] .asl-slider-container.is-dash-mode .asl-notch-pages {
+  display: none !important;
+}
+.card-net-allstar .asl-slider-container.is-dash-mode .asl-notch-dash-badge,
+.radio-container[data-network-type="allstar"] .asl-slider-container.is-dash-mode .asl-notch-dash-badge {
+  display: inline-flex !important;
+}
+
+/* Light Theme Overrides for 4x5 Deep Amber Dashboard Tiles */
+[data-theme="light"] .card-net-allstar .asl-matrix-container.is-dash-view,
+[data-theme="light"] .radio-container[data-network-type="allstar"] .asl-matrix-container.is-dash-view {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+[data-theme="light"] .card-net-allstar .btn-allstar-node.asl-dash-tile,
+[data-theme="light"] .radio-container[data-network-type="allstar"] .btn-allstar-node.asl-dash-tile {
+  background: linear-gradient(180deg, rgba(146, 64, 14, 0.68) 0%, rgba(92, 36, 6, 0.80) 100%) !important;
+  border-color: rgba(245, 158, 11, 0.48) !important;
+}
+[data-theme="light"] .card-net-allstar .btn-allstar-node.asl-dash-tile .asl-btn-num,
+[data-theme="light"] .radio-container[data-network-type="allstar"] .btn-allstar-node.asl-dash-tile .asl-btn-num {
+  color: #ffffff !important;
+}
+[data-theme="light"] .card-net-allstar .btn-allstar-node.asl-dash-tile .asl-dash-desc-line,
+[data-theme="light"] .radio-container[data-network-type="allstar"] .btn-allstar-node.asl-dash-tile .asl-dash-desc-line {
+  color: #fde68a !important;
+}
+
+

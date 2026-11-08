@@ -369,6 +369,19 @@ def apply_update(tarball_url: Optional[str] = None) -> Tuple[bool, str]:
                 except Exception:
                     pass
 
+        c_vocoder_makefile = app_root / "src" / "c_vocoder" / "Makefile"
+        if os.name != "nt" and c_vocoder_makefile.exists():
+            try:
+                import subprocess
+                logger.info("[UPDATER] Building native C vocoder (libmbe_neo_bridge.so)...")
+                subprocess.run(["make", "-C", str(c_vocoder_makefile.parent)], check=True, timeout=180)
+                built_so = c_vocoder_makefile.parent / "libmbe_neo_bridge.so"
+                if built_so.exists():
+                    shutil.copy2(str(built_so), "/usr/local/lib/libmbe_neo_bridge.so")
+                    logger.info("[UPDATER] Native C vocoder updated in /usr/local/lib/libmbe_neo_bridge.so")
+            except Exception as build_err:
+                logger.warning(f"[UPDATER] C vocoder build during update failed (will retry on startup): {build_err}")
+
         logger.info("[UPDATER] Update applied successfully to codebase.")
 
         # Cleanup tmp files

@@ -105,7 +105,7 @@ export function initHamQthSettings() {
           statusEl.style.color = "#f85149";
           statusEl.textContent = window.t ? window.t("hamqth.err_specify_creds", {}, "⚠️ Укажите логин и пароль") : "⚠️ Укажите логин и пароль";
         }
-        showToast(`⚠️ Заполните логин и пароль ${portalLabel}`, 3000);
+        showToast(window.t ? window.t("hamqth.err_specify_creds", {}, "⚠️ Укажите логин и пароль") : `⚠️ Заполните логин и пароль ${portalLabel}`, 3000);
         return;
       }
 
@@ -119,7 +119,7 @@ export function initHamQthSettings() {
       if (statusEl) {
         statusEl.style.display = "block";
         statusEl.style.color = "#58a6ff";
-        statusEl.textContent = `Проверка авторизации на ${portalLabel}...`;
+        statusEl.textContent = window.t ? window.t("hamqth.checking_portal", { portal: portalLabel }, `Проверка авторизации на ${portalLabel}...`) : `Проверка авторизации на ${portalLabel}...`;
       }
 
       try {
@@ -135,22 +135,25 @@ export function initHamQthSettings() {
         const resJson = await resp.json();
 
         if (resJson && resJson.status === "ok") {
+          const okText = window.t ? window.t("hamqth.auth_ok_short", {}, "Успешно подключено") : "Успешно подключено";
           if (statusEl) {
             statusEl.style.color = "#3fb950";
-            statusEl.textContent = "✓ " + (resJson.message || "Успешно подключено");
+            statusEl.textContent = "✓ " + (resJson.message || okText);
           }
-          showToast(`✓ Успешная авторизация на ${portalLabel}`, 3000);
+          showToast(window.t ? window.t("hamqth.auth_ok_toast", { portal: portalLabel }, `✓ Успешная авторизация на ${portalLabel}`) : `✓ Успешная авторизация на ${portalLabel}`, 3000);
         } else {
+          const errText = window.t ? window.t("hamqth.auth_err_short", {}, "Ошибка авторизации") : "Ошибка авторизации";
           if (statusEl) {
             statusEl.style.color = "#f85149";
-            statusEl.textContent = "✕ " + (resJson.message || "Ошибка авторизации");
+            statusEl.textContent = "✕ " + (resJson.message || errText);
           }
-          showToast(`✕ ${portalLabel}: ${resJson.message || "Ошибка"}`, 4000);
+          showToast(`✕ ${portalLabel}: ${resJson.message || errText}`, 4000);
         }
       } catch (err) {
         if (statusEl) {
           statusEl.style.color = "#f85149";
-          statusEl.textContent = `✕ Сетевая ошибка: ${err.message}`;
+          const netErr = window.t ? window.t("common.error", {}, "Ошибка") : "Сетевая ошибка";
+          statusEl.textContent = `✕ ${netErr}: ${err.message}`;
         }
         showToast(window.t ? window.t("hamqth.server_unreachable", {}, "✕ Не удалось связаться с сервером") : "✕ Не удалось связаться с сервером", 3500);
       } finally {

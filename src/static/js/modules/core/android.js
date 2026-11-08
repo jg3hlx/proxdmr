@@ -1,4 +1,4 @@
-import { disableAllTranscribe } from '../dmr/transcriber.js?v=2.9.564';
+import { disableAllTranscribe } from '../dmr/transcriber.js?v=2.9.628';
 import { initHapticSettingsUI } from './haptic.js';
 
 /**

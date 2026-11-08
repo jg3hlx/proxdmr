@@ -41,6 +41,7 @@ export function initGridDragReorder(radiosGrid, onReorderCallback) {
   radiosGrid.addEventListener("pointerdown", (e) => {
     // Only primary button (left mouse) or touch/pen
     if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (!e.target || typeof e.target.closest !== "function") return;
 
     // Check if target is inside an interactive control
     if (e.target.closest(interactiveSelector)) return;

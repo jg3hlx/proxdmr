@@ -7,7 +7,7 @@
 
 import { safeEscapeHtml, getCleanTgDesc, getLocalizedCountryName, DMR_MCC_MAP, emojiToIso } from '../core/formatters.js?v=2.9.380';
 import { showToast } from '../core/toast.js';
-import { pushNavState, notifyNavClosed } from '../ui/navigation.js';
+import { pushNavState, notifyNavClosed } from '../ui/navigation.js?v=2.9.614';
 
 // Safe window helper bridges
 function openTgIdActionMenu(tgOrIdInfo) {

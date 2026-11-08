@@ -1,7 +1,7 @@
 """
 DMR AMBE+2 Software Vocoder Encoder for ProxDMR
-Encodes 8000 Hz 16-bit mono PCM into AMBE+2 72-bit (9-byte) frames using libambe_vocoder.so.
-Includes 300 Hz High-Pass filter and peak limiter for broadcast-quality DMR voice.
+Encodes 8000 Hz 16-bit mono PCM into AMBE+2 72-bit (9-byte) frames using libmbe_neo_bridge.so.
+Includes 300 Hz High-Pass filter and silence thresholding for broadcast-quality DMR voice.
 """
 
 import ctypes
@@ -17,11 +17,11 @@ logger = logging.getLogger("proxdmr.vocoder_encoder")
 
 class HighPassFilter300Hz:
     """
-    2nd order IIR Butterworth High-Pass Filter @ 300 Hz cutoff (Fs = 8000 Hz).
-    Removes low-frequency rumble, AC hum (50/60 Hz), and microphone plosives.
+    2nd order IIR Butterworth High-Pass Filter @ 130 Hz cutoff (Fs = 8000 Hz).
+    Removes sub-vocal rumble, DC offset, and AC hum (50/60 Hz) without cutting vocal warmth.
     """
     def __init__(self):
-        C = math.tan(math.pi * 300.0 / 8000.0)
+        C = math.tan(math.pi * 130.0 / 8000.0)
         C2 = C * C
         sqrt2 = math.sqrt(2.0)
         D = 1.0 + sqrt2 * C + C2
@@ -59,13 +59,12 @@ class HighPassFilter300Hz:
 
 # Standard ETSI DMR AMBE+2 Silence Frame (72-bit / 9-byte canonical bit pattern)
 # Bit pattern: 0xACAA40200044408080
-# Decodes to true digital silence in AMBE+2 vocoders without pitch estimation artifacts.
 AMBE_SILENCE_FRAME = bytes.fromhex("acaa40200044408080")
 
 
 class DMRVocoderEncoder:
     """
-    AMBE+2 Voice Encoder for DMR.
+    AMBE+2 Voice Encoder for DMR powered by mbelib-neo.
     Converts 8000 Hz 16-bit PCM (480 samples = 60 ms) into 3 AMBE+2 frames (27 bytes = 216 bits).
     """
     def __init__(self):
@@ -77,43 +76,64 @@ class DMRVocoderEncoder:
 
         if self.lib:
             try:
-                self.lib.ambe_encoder_create.restype = ctypes.c_void_p
-                self.lib.ambe_encoder_destroy.argtypes = [ctypes.c_void_p]
-                self.lib.ambe_encode_frame.argtypes = [
+                self.lib.mbe_neo_encoder_create.restype = ctypes.c_void_p
+                self.lib.mbe_neo_encoder_destroy.argtypes = [ctypes.c_void_p]
+                self.lib.mbe_neo_encoder_reset.argtypes = [ctypes.c_void_p]
+                self.lib.mbe_neo_encode_72.argtypes = [
                     ctypes.c_void_p,
                     ctypes.POINTER(ctypes.c_int16),
                     ctypes.POINTER(ctypes.c_uint8)
                 ]
-                self.lib.ambe_encode_frame.restype = ctypes.c_int
+                self.lib.mbe_neo_encode_72.restype = ctypes.c_int
 
-                self.enc = self.lib.ambe_encoder_create()
+                self.enc = self.lib.mbe_neo_encoder_create()
                 if self.enc:
                     self.is_ready = True
-                    logger.info("[VOCODER_ENC] AMBE+2 Software Encoder initialized successfully")
+                    logger.info("[VOCODER_ENC] mbelib-neo AMBE+2 Encoder initialized successfully")
                 else:
-                    logger.error("[VOCODER_ENC] Failed to create encoder instance")
+                    logger.error("[VOCODER_ENC] Failed to create mbelib-neo encoder instance")
             except Exception as e:
                 logger.error(f"[VOCODER_ENC] Initialization error: {e}")
         else:
-            logger.warning("[VOCODER_ENC] libambe_vocoder.so not found. Encoding disabled.")
+            logger.warning("[VOCODER_ENC] libmbe_neo_bridge.so not found. Encoding disabled.")
 
     def _load_library(self) -> Optional[ctypes.CDLL]:
+        c_vocoder_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "c_vocoder"))
+        local_so = os.path.join(c_vocoder_dir, "libmbe_neo_bridge.so")
         candidates = [
-            "/usr/local/lib/libambe_vocoder.so",
-            "/app/src/c_vocoder/libambe_vocoder.so",
-            os.path.join(os.path.dirname(__file__), "..", "c_vocoder", "libambe_vocoder.so"),
-            "libambe_vocoder.so",
-            ctypes.util.find_library("ambe_vocoder")
+            "/usr/local/lib/libmbe_neo_bridge.so",
+            "/app/src/c_vocoder/libmbe_neo_bridge.so",
+            local_so,
+            os.path.join(c_vocoder_dir, "mbe_neo_bridge.dll"),
+            "libmbe_neo_bridge.so",
         ]
         for path in candidates:
             if not path:
                 continue
             try:
-                lib = ctypes.CDLL(path)
-                logger.info(f"[VOCODER_ENC] Loaded vocoder library from {path}")
-                return lib
+                if os.path.exists(path) or not os.path.isabs(path):
+                    lib = ctypes.CDLL(path)
+                    logger.info(f"[VOCODER_ENC] Loaded vocoder encoder from {path}")
+                    return lib
             except Exception:
                 continue
+
+        if os.name != "nt" and os.path.isfile(os.path.join(c_vocoder_dir, "Makefile")):
+            try:
+                import subprocess
+                import shutil
+                logger.info(f"[VOCODER_ENC] libmbe_neo_bridge.so not found, building in {c_vocoder_dir}...")
+                subprocess.run(["make", "-C", c_vocoder_dir], check=True, timeout=180)
+                if os.path.isfile(local_so):
+                    try:
+                        shutil.copy2(local_so, "/usr/local/lib/libmbe_neo_bridge.so")
+                    except Exception:
+                        pass
+                    lib = ctypes.CDLL(local_so)
+                    logger.info(f"[VOCODER_ENC] Built and loaded vocoder encoder from {local_so}")
+                    return lib
+            except Exception as e:
+                logger.error(f"[VOCODER_ENC] Auto-build of libmbe_neo_bridge.so failed: {e}")
         return None
 
     def reset(self):
@@ -122,8 +142,7 @@ class DMRVocoderEncoder:
         self._pcm_buffer.clear()
         if self.enc and self.lib:
             try:
-                self.lib.ambe_encoder_destroy(self.enc)
-                self.enc = self.lib.ambe_encoder_create()
+                self.lib.mbe_neo_encoder_reset(self.enc)
             except Exception:
                 pass
 
@@ -134,22 +153,18 @@ class DMRVocoderEncoder:
         if not self.is_ready or not self.enc:
             return None
 
-        # Check for silence or low background noise floor.
-        # Below peak 70 / RMS ~30 (-53 dBFS), there is no intelligible speech phoneme.
-        # Passing near-zero noise into libambe_vocoder causes its pitch estimator
-        # to latch onto minimum lag (20 samples = 400 Hz) and generate high-frequency buzzing harmonics.
-        peak = max(abs(s) for s in pcm_160_samples)
-        if peak < 70:
-            self.hpf.reset()
-            return AMBE_SILENCE_FRAME
-
-        # Filter audio
+        # Filter audio continuously so IIR state never clicks on quiet consonant transitions
         filtered = self.hpf.process(pcm_160_samples)
+
+        # Check for silence or low background noise floor after DC/rumble removal
+        peak = max(abs(s) for s in filtered)
+        if peak < 70:
+            return AMBE_SILENCE_FRAME
 
         pcm_arr = (ctypes.c_int16 * 160)(*filtered)
         ambe_arr = (ctypes.c_uint8 * 9)()
 
-        res = self.lib.ambe_encode_frame(self.enc, pcm_arr, ambe_arr)
+        res = self.lib.mbe_neo_encode_72(self.enc, pcm_arr, ambe_arr)
         if res == 0:
             return bytes(ambe_arr)
         return None
@@ -182,13 +197,14 @@ class DMRVocoderEncoder:
         return frames
 
     def close(self):
-        """Explicitly release C-allocated encoder context. Call when done with hotspot."""
+        """Explicitly release C-allocated encoder context."""
         if self.enc and self.lib:
             try:
-                self.lib.ambe_encoder_destroy(self.enc)
+                self.lib.mbe_neo_encoder_destroy(self.enc)
             except Exception:
                 pass
             self.enc = None
+        self.is_ready = False
 
     def __del__(self):
         self.close()

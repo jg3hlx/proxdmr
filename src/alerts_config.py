@@ -379,3 +379,22 @@ def format_server_prefix(cfg: Dict[str, Any], fallback_label: str = "") -> str:
     if icon:
         return f"{icon} [{label}]"
     return f"[{label}]"
+
+
+def send_bm_failover_telegram_alert(message_body: str, data_dir: Optional[Path] = None) -> Tuple[bool, str]:
+    """
+    Sends an HTML-formatted Telegram notification about BrandMeister server
+    abnormal behavior and automatic failover progression.
+    Works whenever bot_token and chat_id are configured in alerts.json.
+    """
+    try:
+        cfg = load_alerts_config(data_dir)
+        token = str(cfg.get("bot_token", "") or "").strip()
+        chat_id = str(cfg.get("chat_id", "") or "").strip()
+        if not token or not chat_id:
+            return False, "Telegram bot_token or chat_id not configured"
+        prefix = format_server_prefix(cfg)
+        full_text = f"<b>{prefix}</b>\n{message_body}"
+        return send_telegram_direct(cfg, full_text)
+    except Exception as e:
+        return False, str(e)

@@ -6,8 +6,8 @@
 
 import { safeEscapeHtml, isoToEmoji, getLocalizedCountryName } from '../core/formatters.js?v=2.9.367';
 import { showToast } from '../core/toast.js';
-import { pushNavState, notifyNavClosed } from '../ui/navigation.js';
-import { ws } from '../network/ws.js?v=2.9.564';
+import { pushNavState, notifyNavClosed } from '../ui/navigation.js?v=2.9.614';
+import { ws } from '../network/ws.js?v=2.9.623';
 
 // Accessors for app functions and state
 const resolveHotspotId = (id) => (window.resolveHotspotId ? window.resolveHotspotId(id) : id);
@@ -82,7 +82,9 @@ function updateBenchmarkModalHeaders(netType) {
 
   if (net === "bm") {
     defaultTitle = "⚡ Тестирование серверов BrandMeister";
-    defaultSubtitle = "Пинг-тест всех мастеров BM (до 10 пакетов или 7 секунд) для выбора наилучшего";
+    defaultSubtitle = window.t
+      ? window.t("bm_bench.modal_subtitle_bm", {}, "Пинг-тест всех мастеров BM (до 10 пакетов или 7 секунд) для выбора наилучшего")
+      : "Пинг-тест всех мастеров BM (до 10 пакетов или 7 секунд) для выбора наилучшего";
     thText = "Сервер BrandMeister";
   } else if (net === "freedmr") {
     defaultTitle = "⚡ Тестирование серверов FreeDMR";
@@ -518,7 +520,10 @@ export function renderBmBenchmarkTable(results) {
     const flag = r.flag || (cCode ? isoToEmoji(cCode) : "") || "🌐";
     const cName = getLocalizedCountryName(cCode, r.country_name || r.country || "DMR", curLang);
     const bmId = (currentBenchmarkNetworkType === "bm" && r.id) ? `BM ${r.id}` : "";
-    let label = r.name || (bmId ? `${cName} (${bmId})` : (r.id ? `${cName} (${r.id})` : `${cName} (${r.host || ""})`));
+    // Build localized label dynamically if cCode/cName is present, preventing hardcoded Russian server strings from leaking
+    let label = (cCode && cName)
+      ? (bmId ? `${cName} (${bmId})` : (r.id ? `${cName} (${r.id})` : `${cName} (${r.host || ""})`))
+      : (r.name || (r.host || ""));
     let cleanLabel = (label || "").trim();
     if (flag && cleanLabel.startsWith(flag)) {
       cleanLabel = cleanLabel.substring(flag.length).trim();

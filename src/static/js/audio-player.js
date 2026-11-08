@@ -165,6 +165,10 @@ class HotspotAudioSlot {
     // Resampler stream continuity state (preserves sample history across 60ms chunks)
     this.resampleBuf = null;
     this.resamplePos = 0.0;
+    this.lastFeedSample = 0.0;
+    this.lastFeedSlope = 0.0;
+    this.chebyS1 = new Float32Array(4);
+    this.chebyS2 = new Float32Array(4);
     
     // Audio Graph: [Source] -> slotMuteGainNode -> slotDuckGainNode -> slotPanNode (Stereo Panner) -> channelGainNode
     this.slotMuteGainNode = audioCtx.createGain();
@@ -341,26 +345,58 @@ class HotspotAudioSlot {
       inSamples[i] = s;
     }
 
+    // Check if starting from silence or resuming after an idle gap (> 150ms)
+    const isNewTransmission = (this.nextStartTime <= 0) || ((now - this.nextStartTime) > 0.150);
+
+    // Boundary Trajectory Micro-Crossfade on incoming 60ms chunk boundary (index 0)
+    // and internal 20ms AMBE frame boundaries (indices 160 and 320)
+    if (isNewTransmission) {
+      this.lastFeedSample = inSamples[0];
+      this.lastFeedSlope = inSamples.length > 1 ? (inSamples[1] - inSamples[0]) : 0.0;
+    }
+
+    const checkBoundaries = [0, 160, 320];
+    for (let b = 0; b < checkBoundaries.length; b++) {
+      const idx = checkBoundaries[b];
+      if (idx >= inSamples.length) continue;
+      const prevS = (idx === 0) ? this.lastFeedSample : inSamples[idx - 1];
+      const prevSlope = (idx === 0) ? this.lastFeedSlope : ((idx >= 2) ? (inSamples[idx - 1] - inSamples[idx - 2]) : 0.0);
+      const curS = inSamples[idx];
+      const jump = Math.abs(curS - prevS);
+      if (jump > 0.035) { // ~1150 in 16-bit PCM scale (1150 / 32768)
+        const fadeLen = Math.min(4, inSamples.length - idx);
+        for (let k = 0; k < fadeLen; k++) {
+          const w = 0.5 * (1.0 - Math.cos((Math.PI * (k + 1)) / (fadeLen + 1)));
+          const ext = prevS + (k + 1) * prevSlope * 0.5;
+          inSamples[idx + k] = ext * (1.0 - w) + inSamples[idx + k] * w;
+        }
+      }
+    }
+    if (inSamples.length >= 2) {
+      this.lastFeedSample = inSamples[inSamples.length - 1];
+      this.lastFeedSlope = inSamples[inSamples.length - 1] - inSamples[inSamples.length - 2];
+    }
+
     // 2. Jitter Buffer cushion & transmission state tracking
     const jitterSec = (this.player && typeof this.player.getJitterBufferSec === "function")
       ? this.player.getJitterBufferSec()
-      : 0.120; // Default 120 ms buffer cushion
-
-    // Check if starting from silence or resuming after an idle gap (> 150ms)
-    const isNewTransmission = (this.nextStartTime <= 0) || ((now - this.nextStartTime) > 0.150);
+      : 0.180; // Default 180 ms buffer cushion
+    const startCushionSec = Math.min(0.320, Math.max(0.180, jitterSec));
 
     if (isNewTransmission) {
       // Clear resampler state to prevent stale audio history leaking from previous transmission
       this.resampleBuf = null;
       this.resamplePos = 0.0;
-      this.nextStartTime = now + jitterSec;
+      this.chebyS1.fill(0);
+      this.chebyS2.fill(0);
+      this.nextStartTime = now + startCushionSec;
     } else if (this.nextStartTime < now) {
       // Ongoing transmission with a network stall (audio queue ran dry):
-      // Restore healthy cushion (75% of target jitter, between 60ms and 400ms)
-      this.nextStartTime = now + Math.min(0.400, Math.max(0.060, jitterSec * 0.75));
+      // Restore healthy cushion (between 120ms and 260ms)
+      this.nextStartTime = now + Math.min(0.260, Math.max(0.120, jitterSec * 0.5));
     } else if ((this.nextStartTime - now) > Math.max(0.800, jitterSec * 2.5)) {
       // Buffer drift / runaway protection: dynamic ceiling scaled to user's configured jitter buffer up to 2000ms!
-      this.nextStartTime = now + jitterSec;
+      this.nextStartTime = now + startCushionSec;
     }
 
     // 3. Resample 8000 Hz stream to native audioCtx.sampleRate with 4-point Hermite continuity
@@ -371,13 +407,40 @@ class HotspotAudioSlot {
     if (targetRate === 8000) {
       outSamples = inSamples;
       numOut = numSamples;
+    } else if (targetRate === 48000) {
+      numOut = numSamples * 6;
+      outSamples = new Float32Array(numOut);
+      for (let i = 0; i < numSamples; i++) {
+        outSamples[i * 6] = inSamples[i] * 6.0;
+      }
+      // High-Fidelity 8th-order Linear-Passband Anti-Imaging Resampler (0-3400 Hz: +/-0.15 dB, >4400 Hz: <-70 dB)
+      const b0 = [0.00179210, 1.0, 1.0, 1.0];
+      const b1 = [0.00013708, -1.44747273, -1.66875045, -1.72030851];
+      const b2 = [0.00179210, 1.0, 1.0, 1.0];
+      const a1 = [-1.64783670, -1.69094764, -1.73401543, -1.76724683];
+      const a2 = [0.69243186, 0.80556820, 0.91226991, 0.97631579];
+      for (let s = 0; s < 4; s++) {
+        let _s1 = this.chebyS1[s];
+        let _s2 = this.chebyS2[s];
+        const _b0 = b0[s], _b1 = b1[s], _b2 = b2[s];
+        const _a1 = a1[s], _a2 = a2[s];
+        for (let i = 0; i < numOut; i++) {
+          const inp = outSamples[i];
+          const y = _b0 * inp + _s1;
+          _s1 = _b1 * inp - _a1 * y + _s2;
+          _s2 = _b2 * inp - _a2 * y;
+          outSamples[i] = y;
+        }
+        this.chebyS1[s] = _s1;
+        this.chebyS2[s] = _s2;
+      }
     } else {
       const ratio = 8000.0 / targetRate;
       numOut = Math.round(numSamples * (targetRate / 8000.0));
       outSamples = new Float32Array(numOut);
 
       // Initialize continuous 4-point Hermite resampler
-      if (!this.resampleBuf || this.resampleBuf.length < 4) {
+      if (!this.resampleBuf || this.resampleBuf.length < 3) {
         const s0 = inSamples[0];
         this.resampleBuf = new Float32Array([s0, s0, s0]);
         this.resamplePos = 1.0;
@@ -444,6 +507,8 @@ class HotspotAudioSlot {
     this.resampleBuf = null;
     this.resamplePos = 0.0;
     this._lastFeedTime = 0;
+    this.lastFeedSample = 0.0;
+    this.lastFeedSlope = 0.0;
     // Note: Do not hard-reset this.nextStartTime = 0 immediately!
     // Hardware audio buffer is still playing out the last 120-180ms of audio.
     // Leaving this.nextStartTime allows it to expire naturally without collision.
@@ -454,6 +519,8 @@ class HotspotAudioSlot {
     this.resampleBuf = null;
     this.resamplePos = 0.0;
     this._lastFeedTime = 0;
+    this.lastFeedSample = 0.0;
+    this.lastFeedSlope = 0.0;
   }
 }
 
@@ -594,10 +661,9 @@ class HotspotAudioChannel {
   setVolume(vol) {
     const parsed = typeof vol === "number" ? vol : parseFloat(vol);
     const raw = isNaN(parsed) ? 1.2 : parsed;
-    // If raw is given as percentage (> 2.5, e.g. 100 or 120), normalize to 0.0 - 2.5 factor.
-    // If already normalized (e.g. 1.0 or 1.2 or 0.0), use directly.
-    const normalized = raw > 2.5 ? (raw / 100.0) : raw;
-    this.volume = Math.max(0.0, Math.min(2.5, normalized));
+    // Only divide by 100 if raw is a whole percentage > 25 (e.g. 50%, 80%, 100%)
+    const normalized = raw > 25.0 ? (raw / 100.0) : raw;
+    this.volume = Math.max(0.0, Math.min(25.0, normalized));
     if (!this.isMuted && this.audioCtx && this.channelGainNode) {
       const now = this.audioCtx.currentTime;
       this.channelGainNode.gain.cancelScheduledValues(now);
@@ -622,9 +688,32 @@ class DMRAudioPlayer {
     this.eqMidNode = null;
     this.eqHighNode = null;
     this.deemphasisNode = null;
+    this.eq10Filters = [];
+    this.eq10Gains = [2.5, 2.0, -3.0, -4.0, 1.0, -2.5, -1.5, -2.0, -1.5, 1.5];
+    this.eq10Enabled = true;
+    this.limiterEnabled = true;
+    this.activeProfileNet = "dmr";
+    this.dspProfiles = {
+      dmr: {
+        eq10Enabled: true,
+        eq10Gains: [2.5, 2.0, -3.0, -4.0, 1.0, -2.5, -1.5, -2.0, -1.5, 1.5],
+        limiterEnabled: true
+      },
+      allstar: {
+        eq10Enabled: false,
+        eq10Gains: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        limiterEnabled: true
+      }
+    };
+
+    // Load persisted profiles for both networks from localStorage
+    this.loadDspProfilesFromStorage();
+
     this.preGainNode = null;
     this.masterLimiter = null;
     this.masterGainNode = null;
+    this.eq10Filters = [];
+    this._graphJustBuilt = false;
     this.channels = new Map(); // hotspotId -> HotspotAudioChannel
     this.sampleRate = 8000;
     this.globalMuted = false;
@@ -646,9 +735,17 @@ class DMRAudioPlayer {
     this.eqHigh = 0;
     this.deemphasis = false;
     this.jitterBufferMs = 180;
+    this.rxBoostDb = 50;
 
     try {
       if (typeof localStorage !== "undefined") {
+        const savedBoost = localStorage.getItem("proxdmr_rx_boost_pct");
+        if (savedBoost !== null) {
+          const parsedB = parseInt(savedBoost, 10);
+          if (!isNaN(parsedB) && parsedB >= 1 && parsedB <= 100) {
+            this.rxBoostDb = parsedB;
+          }
+        }
         const savedPre = localStorage.getItem("proxdmr_pre_gain_db");
         if (savedPre !== null) this.preGainDb = Math.max(-20, Math.min(12, Math.round(parseFloat(savedPre) || 0)));
         const sLow = localStorage.getItem("proxdmr_eq_low");
@@ -708,12 +805,28 @@ class DMRAudioPlayer {
           this.recordingsInputBus.channelInterpretation = "speakers";
         } catch (_) {}
 
-        // 1. Equalizer & De-emphasis: Handled server-side in Python (ServerAudioEqualizer)
-        // Eliminates mobile Web Audio biquad filter crackling and buffer underruns.
-        this.eqLowNode = null;
-        this.eqMidNode = null;
-        this.eqHighNode = null;
-        this.deemphasisNode = null;
+        // 1. 10-Band Biquad Equalizer Cascade (Web Audio API)
+        const EQ10_SPECS = [
+          { freq: 110,  type: "peaking",   q: 1.2 },
+          { freq: 200,  type: "peaking",   q: 1.4 },
+          { freq: 330,  type: "peaking",   q: 2.2 },
+          { freq: 460,  type: "peaking",   q: 2.2 },
+          { freq: 750,  type: "peaking",   q: 1.4 },
+          { freq: 1350, type: "peaking",   q: 2.2 },
+          { freq: 2150, type: "peaking",   q: 2.5 },
+          { freq: 2750, type: "peaking",   q: 2.5 },
+          { freq: 3400, type: "peaking",   q: 1.8 },
+          { freq: 5000, type: "highshelf", q: 1.0 },
+        ];
+        this.eq10Filters = EQ10_SPECS.map((spec, idx) => {
+          const filter = this.audioCtx.createBiquadFilter();
+          filter.type = spec.type;
+          filter.frequency.value = spec.freq;
+          filter.Q.value = spec.q;
+          const g = (this.eq10Gains && this.eq10Gains[idx] !== undefined) ? this.eq10Gains[idx] : 0.0;
+          filter.gain.value = this.eq10Enabled ? g : 0.0;
+          return filter;
+        });
 
         // 2. Pre-Gain Node (unity gain in WebAudio graph; digital Pre-Gain is applied to incoming samples in HotspotAudioSlot)
         this.preGainNode = this.audioCtx.createGain();
@@ -725,9 +838,9 @@ class DMRAudioPlayer {
         } catch (_) {}
 
         this.masterLimiter = this.audioCtx.createDynamicsCompressor();
-        this.masterLimiter.threshold.value = -1.0; // dBFS (true peak ceiling)
-        this.masterLimiter.knee.value = 1.0;       // dB (tight knee: 100% linear pass-through below -1.5 dBFS)
-        this.masterLimiter.ratio.value = 20.0;     // Fast peak limiting ceiling
+        this.masterLimiter.threshold.value = this.limiterEnabled ? -1.0 : 0.0; // dBFS
+        this.masterLimiter.knee.value = 1.0;       // dB
+        this.masterLimiter.ratio.value = this.limiterEnabled ? 20.0 : 1.0;     // 1.0 = linear bypass
         this.masterLimiter.attack.value = 0.002;   // 2ms fast attack
         this.masterLimiter.release.value = 0.080;  // 80ms fast recovery
         try {
@@ -747,13 +860,34 @@ class DMRAudioPlayer {
         } catch (_) {}
 
         // Connect graph:
-        // Live RX: rxInputBus -> preGainNode -> masterLimiter -> masterGainNode -> destination
+        // Live RX: rxInputBus -> eq10Filters[0..9] -> preGainNode -> masterLimiter -> masterGainNode -> destination
         // Log Player: recordingsInputBus -> masterLimiter -> masterGainNode -> destination
-        this.rxInputBus.connect(this.preGainNode);
+        let prevNode = this.rxInputBus;
+        for (let i = 0; i < this.eq10Filters.length; i++) {
+          prevNode.connect(this.eq10Filters[i]);
+          prevNode = this.eq10Filters[i];
+        }
+        prevNode.connect(this.preGainNode);
         this.preGainNode.connect(this.masterLimiter);
         this.recordingsInputBus.connect(this.masterLimiter);
         this.masterLimiter.connect(this.masterGainNode);
         this.masterGainNode.connect(this.audioCtx.destination);
+
+        // Force-apply EQ gains directly from loaded profile (do NOT use syncActiveAudioRxPreset
+        // which reads DOM sliders — DOM may not be ready or may have stale default values).
+        // this.eq10Gains and this.eq10Enabled are already correctly loaded from localStorage
+        // by loadDspProfilesFromStorage() called in the constructor.
+        for (let _i = 0; _i < this.eq10Filters.length; _i++) {
+          const _g = (this.eq10Gains && this.eq10Gains[_i] !== undefined) ? this.eq10Gains[_i] : 0.0;
+          this.eq10Filters[_i].gain.value = this.eq10Enabled ? _g : 0.0;
+        }
+        // Also force-apply limiter state from loaded profile
+        if (this.masterLimiter) {
+          this.masterLimiter.threshold.value = this.limiterEnabled ? -1.0 : 0.0;
+          this.masterLimiter.ratio.value = this.limiterEnabled ? 20.0 : 1.0;
+        }
+        // Mark that graph was freshly built — ensureNetworkProfile must re-apply on first call
+        this._graphJustBuilt = true;
       } catch (e) {
         console.warn("[AUDIO] Master graph init error:", e);
       }
@@ -771,8 +905,8 @@ class DMRAudioPlayer {
     }
     this.workletInitPromise = (async () => {
       try {
-        const cacheVer = (typeof window !== "undefined" && window.CACHE_VERSION) ? window.CACHE_VERSION : "2.9.443";
-        await this.audioCtx.audioWorklet.addModule(`/static/js/worklets/dmr-audio-processor.js?v=2.9.524`);
+        const cacheVer = (typeof window !== "undefined" && window.CACHE_VERSION) ? window.CACHE_VERSION : "2.9.619";
+        await this.audioCtx.audioWorklet.addModule(`/static/js/worklets/dmr-audio-processor.js?v=2.9.619`);
         this.workletNode = new AudioWorkletNode(this.audioCtx, "dmr-audio-processor", {
           numberOfInputs: 0,
           numberOfOutputs: 1,
@@ -974,9 +1108,100 @@ class DMRAudioPlayer {
     return ch;
   }
 
+  loadDspProfilesFromStorage() {
+    try {
+      if (typeof localStorage === "undefined") return;
+
+      // DMR Profile
+      const curDmrPres = localStorage.getItem("proxdmr_audio_rx_active_preset") || "1";
+      const rawDmr = localStorage.getItem(`proxdmr_audio_rx_preset_${curDmrPres}`);
+      if (rawDmr) {
+        const d = JSON.parse(rawDmr);
+        if (d) {
+          if (d.eq10Enable !== undefined) this.dspProfiles.dmr.eq10Enabled = Boolean(d.eq10Enable);
+          if (Array.isArray(d.eq10Gains) && d.eq10Gains.length === 10) {
+            this.dspProfiles.dmr.eq10Gains = d.eq10Gains.map(v => Number(v) / 10.0);
+          }
+          if (d.limiterEnable !== undefined) this.dspProfiles.dmr.limiterEnabled = Boolean(d.limiterEnable);
+        }
+      }
+
+      // AllStar Profile
+      const curAslPres = localStorage.getItem("proxdmr_asl_audio_rx_active_preset") || "1";
+      const rawAsl = localStorage.getItem(`proxdmr_asl_audio_rx_preset_${curAslPres}`);
+      if (rawAsl) {
+        const a = JSON.parse(rawAsl);
+        if (a) {
+          if (a.eq10Enable !== undefined) this.dspProfiles.allstar.eq10Enabled = Boolean(a.eq10Enable);
+          if (Array.isArray(a.eq10Gains) && a.eq10Gains.length === 10) {
+            this.dspProfiles.allstar.eq10Gains = a.eq10Gains.map(v => Number(v) / 10.0);
+          }
+          if (a.limiterEnable !== undefined) this.dspProfiles.allstar.limiterEnabled = Boolean(a.limiterEnable);
+        }
+      }
+
+      // Initial active profile
+      const storedNet = localStorage.getItem("proxdmr_audio_rx_net") || "dmr";
+      this.activeProfileNet = (storedNet === "allstar") ? "allstar" : "dmr";
+      const p = this.dspProfiles[this.activeProfileNet];
+      if (p) {
+        this.eq10Enabled = p.eq10Enabled;
+        this.eq10Gains = p.eq10Gains.slice();
+        this.limiterEnabled = p.limiterEnabled;
+      }
+    } catch (_) {}
+  }
+
+  ensureNetworkProfile(targetNet) {
+    const net = (targetNet === "allstar") ? "allstar" : "dmr";
+    // Skip if same network AND graph was not just rebuilt.
+    // _graphJustBuilt is set to true in initSync() after graph construction;
+    // it is cleared here after first successful profile application.
+    if (this.activeProfileNet === net && !this._graphJustBuilt) return;
+    this._graphJustBuilt = false;
+    this.activeProfileNet = net;
+    const p = this.dspProfiles[net];
+    if (!p) return;
+
+    this.eq10Enabled = p.eq10Enabled;
+    this.eq10Gains = p.eq10Gains.slice();
+    this.limiterEnabled = p.limiterEnabled;
+
+    // Apply directly to WebAudio biquad filters and limiter
+    for (let i = 0; i < this.eq10Filters.length; i++) {
+      if (this.eq10Filters[i]) {
+        const g = (this.eq10Gains[i] !== undefined) ? this.eq10Gains[i] : 0.0;
+        this.eq10Filters[i].gain.value = this.eq10Enabled ? g : 0.0;
+      }
+    }
+    if (this.masterLimiter) {
+      if (this.limiterEnabled) {
+        this.masterLimiter.threshold.value = -1.0;
+        this.masterLimiter.ratio.value = 20.0;
+      } else {
+        this.masterLimiter.threshold.value = 0.0;
+        this.masterLimiter.ratio.value = 1.0;
+      }
+    }
+  }
+
+  ensureProfileForHotspot(hotspotId) {
+    let netType = "dmr";
+    if (typeof window !== "undefined") {
+      if (typeof window.getHotspotNetworkType === "function") {
+        netType = window.getHotspotNetworkType(hotspotId) || "dmr";
+      } else if (Array.isArray(window.currentHotspots)) {
+        const hs = window.currentHotspots.find(h => String(h.id) === String(hotspotId));
+        if (hs && hs.network_type) netType = hs.network_type;
+      }
+    }
+    this.ensureNetworkProfile(netType === "allstar" ? "allstar" : "dmr");
+  }
+
   feed(arrayBuffer, hotspotId = "default", slot = 1) {
     this.ensureInitialized();
     if (!this.audioCtx) return;
+    this.ensureProfileForHotspot(hotspotId);
     if (this.audioCtx.state === "suspended") {
       this.audioCtx.resume().catch(() => {});
     }
@@ -1457,22 +1682,46 @@ class DMRAudioPlayer {
     return this.globalMuted;
   }
 
+  setRxBoostDb(pctVal) {
+    const num = parseInt(pctVal, 10);
+    this.rxBoostDb = (!isNaN(num)) ? Math.max(1, Math.min(100, num)) : 50;
+    this.channels.forEach((ch, hid) => {
+      if (typeof window !== "undefined" && typeof window.isHotspotAudioBoosted === "function" && window.isHotspotAudioBoosted(hid)) {
+        const vol = (typeof window.getHotspotVolume === "function") ? window.getHotspotVolume(hid) : 80;
+        this.setHotspotVolume(hid, vol / 100.0);
+      }
+    });
+  }
+
+  getRxBoostDb() {
+    return this.rxBoostDb || 50;
+  }
+
   setHotspotVolume(hotspotId, volume) {
     const hid = String(hotspotId || "default");
     const parsed = typeof volume === "number" ? volume : parseFloat(volume);
     const raw = isNaN(parsed) ? 1.0 : parsed;
     const norm = raw > 2.5 ? (raw / 100.0) : raw;
+
+    const isBoosted = (typeof window !== "undefined" && typeof window.isHotspotAudioBoosted === "function")
+      ? window.isHotspotAudioBoosted(hid)
+      : (typeof localStorage !== "undefined" && localStorage.getItem(`proxdmr_boost_${hid}`) === "true");
+
+    const pct = Math.max(1, Math.min(100, Number(this.rxBoostDb) || 50));
+    const boostMult = isBoosted ? (1.0 + 9.0 * (pct / 100.0)) : 1.0;
+    const effectiveVol = norm * boostMult;
+
     if (this.useWorklet && this.workletNode) {
       try {
         this.workletNode.port.postMessage({
           type: "set_channel_volume",
           hotspotId: hid,
-          volume: norm
+          volume: effectiveVol
         });
       } catch (_) {}
     }
     const ch = this.getOrCreateChannel(hotspotId);
-    ch.setVolume(volume);
+    ch.setVolume(effectiveVol);
   }
 
   setVolume(volume) {
@@ -1568,6 +1817,48 @@ class DMRAudioPlayer {
       high: this.eqHigh !== undefined ? this.eqHigh : 0,
       deemphasis: Boolean(this.deemphasis)
     };
+  }
+
+  setEq10Gains(gainsArray) {
+    if (Array.isArray(gainsArray)) {
+      this.eq10Gains = gainsArray.slice();
+      for (let i = 0; i < this.eq10Filters.length; i++) {
+        if (this.eq10Filters[i]) {
+          const g = (this.eq10Gains[i] !== undefined) ? this.eq10Gains[i] : 0.0;
+          this.eq10Filters[i].gain.value = this.eq10Enabled ? g : 0.0;
+        }
+      }
+    }
+  }
+
+  getEq10Gains() {
+    return this.eq10Gains ? this.eq10Gains.slice() : [2.5, 2.0, -3.0, -4.0, 1.0, -2.5, -1.5, -2.0, -1.5, 1.5];
+  }
+
+  setEq10Enabled(enabled) {
+    this.eq10Enabled = Boolean(enabled);
+    this.setEq10Gains(this.eq10Gains);
+  }
+
+  getEq10Enabled() {
+    return Boolean(this.eq10Enabled);
+  }
+
+  setLimiterEnabled(enabled) {
+    this.limiterEnabled = Boolean(enabled);
+    if (this.masterLimiter) {
+      if (this.limiterEnabled) {
+        this.masterLimiter.threshold.value = -1.0;
+        this.masterLimiter.ratio.value = 20.0;
+      } else {
+        this.masterLimiter.threshold.value = 0.0;
+        this.masterLimiter.ratio.value = 1.0;
+      }
+    }
+  }
+
+  getLimiterEnabled() {
+    return Boolean(this.limiterEnabled);
   }
 
   setDeemphasis(enabled) {

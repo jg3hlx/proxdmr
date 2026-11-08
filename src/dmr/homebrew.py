@@ -71,6 +71,9 @@ class HomeBrewClient:
         on_status_change: Optional[Callable[[BMState, str], None]] = None,
         on_frame_received: Optional[Callable[[bytes], None]] = None,
         on_dmr_frame: Optional[Callable[[DMRFrame], None]] = None,
+        check_credentials_valid_cb: Optional[Callable[[], bool]] = None,
+        get_failover_candidates_cb: Optional[Callable[[str, int], list]] = None,
+        on_failover_event_cb: Optional[Callable[[dict], None]] = None,
     ):
         self.base_repeater_id = repeater_id
         self.ssid = ssid
@@ -88,6 +91,9 @@ class HomeBrewClient:
         self.on_status_change = on_status_change
         self.on_frame_received = on_frame_received
         self.on_dmr_frame = on_dmr_frame
+        self.check_credentials_valid_cb = check_credentials_valid_cb
+        self.get_failover_candidates_cb = get_failover_candidates_cb
+        self.on_failover_event_cb = on_failover_event_cb
 
         self.state: BMState = BMState.DISCONNECTED
         self.transport: Optional[asyncio.DatagramTransport] = None
@@ -100,11 +106,22 @@ class HomeBrewClient:
         self.max_retries: int = 5
         self._retry_task: Optional[asyncio.Task] = None
         self._was_connected: bool = False
+        self._ever_authenticated_ok: bool = False
         self._is_fast_reconnecting: bool = False
         self._is_manual_disconnect: bool = False
         self._connect_gen: int = 0
         self.failed_cycles: int = 0
         self._connect_lock: Optional[asyncio.Lock] = None
+
+        # BM Auto-Failover tracking (60s threshold, up to 15 sorted backup servers)
+        self._unhealthy_since: float = 0.0
+        self._unhealthy_reason: str = ""
+        self._failover_active: bool = False
+        self._failover_primary_host: str = self.master_host
+        self._failover_candidates: list = []
+        self._failover_index: int = 0
+        self._failover_candidate_attempts: int = 0
+        self._failover_cooldown_until: float = 0.0
 
     @property
     def network_label(self) -> str:
@@ -236,9 +253,168 @@ class HomeBrewClient:
         self.handshake_timeout_task = asyncio.create_task(self._handshake_timeout_watcher())
         return True
 
+    def _emit_failover_event(self, payload: dict):
+        if self.on_failover_event_cb:
+            try:
+                self.on_failover_event_cb(payload)
+            except Exception as e:
+                logger.error(f"[HB] Error in failover event callback: {e}")
+
+    def _check_or_advance_bm_failover(self, error_detail: str) -> Optional[float]:
+        """
+        Tracks abnormal BM master behavior for 60 seconds and coordinates switching
+        across up to 15 next best BM servers sorted by ping.
+        Returns a custom retry delay (float) if failover switched servers, else None.
+        """
+        if (self.network_type or "bm").lower() != "bm":
+            return None
+
+        now = time.time()
+        if self._unhealthy_since <= 0.0:
+            self._unhealthy_since = now
+            if not self._failover_active:
+                self._failover_primary_host = self.master_host
+        self._unhealthy_reason = error_detail
+
+        # Case 1: Currently testing a backup candidate server (#1..#15)
+        if self._failover_active:
+            self._failover_candidate_attempts += 1
+            # Give each backup server up to 2 attempts before declaring it failed
+            if self._failover_candidate_attempts < 2:
+                return 1.5
+
+            failed_cand = (
+                self._failover_candidates[self._failover_index]
+                if 0 <= self._failover_index < len(self._failover_candidates)
+                else {"host": self.master_host}
+            )
+            failed_idx_num = self._failover_index + 1
+            total_cands = len(self._failover_candidates)
+
+            next_index = self._failover_index + 1
+            if next_index < total_cands:
+                self._failover_index = next_index
+                self._failover_candidate_attempts = 0
+                next_cand = self._failover_candidates[next_index]
+                next_host = str(next_cand.get("host") or "").strip()
+                self.master_host = next_host
+                self.connect_attempt = 1
+                self._is_fast_reconnecting = False
+                logger.warning(
+                    f"[HB-FAILOVER] Backup server #{failed_idx_num}/{total_cands} ({failed_cand.get('host')}) "
+                    f"failed ({error_detail}). Switching to #{next_index + 1}/{total_cands}: {next_host}"
+                )
+                self._emit_failover_event({
+                    "event": "candidate_failed_next",
+                    "primary_host": self._failover_primary_host,
+                    "failed_candidate": failed_cand,
+                    "failed_index": failed_idx_num,
+                    "failed_reason": error_detail,
+                    "next_candidate": next_cand,
+                    "next_index": next_index + 1,
+                    "total_candidates": total_cands,
+                })
+                return 1.0
+            else:
+                # All 15 backup candidates exhausted -> return to primary host with 10m cooldown
+                primary_host = self._failover_primary_host or self.master_host
+                logger.error(
+                    f"[HB-FAILOVER] All {total_cands} backup BM servers failed! "
+                    f"Reverting to primary server {primary_host}."
+                )
+                self._emit_failover_event({
+                    "event": "all_candidates_failed",
+                    "primary_host": primary_host,
+                    "failed_candidate": failed_cand,
+                    "failed_index": failed_idx_num,
+                    "failed_reason": error_detail,
+                    "total_candidates": total_cands,
+                })
+                self._failover_active = False
+                self._failover_candidates = []
+                self._failover_index = 0
+                self._failover_candidate_attempts = 0
+                self._unhealthy_since = now
+                self._failover_cooldown_until = now + 600.0
+                self.master_host = primary_host
+                self.connect_attempt = 1
+                self._is_fast_reconnecting = False
+                return 5.0
+
+        # Case 2: On primary server — check if 60 seconds of continuous failure have elapsed
+        elapsed = now - self._unhealthy_since
+        if elapsed < 60.0 or now < self._failover_cooldown_until:
+            return None
+
+        if not self.get_failover_candidates_cb:
+            return None
+
+        try:
+            candidates = self.get_failover_candidates_cb(self.master_host, 15) or []
+        except Exception as e:
+            logger.error(f"[HB-FAILOVER] Failed to get failover candidates: {e}")
+            candidates = []
+
+        if not candidates:
+            logger.warning(f"[HB-FAILOVER] No backup BM servers available for {self.master_host}")
+            self._failover_cooldown_until = now + 120.0
+            return None
+
+        self._failover_primary_host = self.master_host
+        self._failover_candidates = candidates[:15]
+        self._failover_index = 0
+        self._failover_candidate_attempts = 0
+        self._failover_active = True
+
+        first_cand = self._failover_candidates[0]
+        next_host = str(first_cand.get("host") or "").strip()
+        total_cands = len(self._failover_candidates)
+        self.master_host = next_host
+        self.connect_attempt = 1
+        self._is_fast_reconnecting = False
+
+        logger.warning(
+            f"[HB-FAILOVER] Primary BM master {self._failover_primary_host} unhealthy for {int(elapsed)}s "
+            f"({error_detail}). Starting failover to #1/{total_cands}: {next_host}"
+        )
+        self._emit_failover_event({
+            "event": "failover_started",
+            "primary_host": self._failover_primary_host,
+            "unhealthy_seconds": int(round(elapsed)),
+            "reason": error_detail,
+            "next_candidate": first_cand,
+            "next_index": 1,
+            "total_candidates": total_cands,
+        })
+        return 1.0
+
     def _handle_attempt_failure(self, error_detail: str) -> bool:
         my_gen = self._connect_gen
         if self._is_manual_disconnect or my_gen != self._connect_gen:
+            return False
+
+        failover_delay = self._check_or_advance_bm_failover(error_detail)
+        if failover_delay is not None:
+            idx_num = self._failover_index + 1
+            total_c = len(self._failover_candidates)
+            if self._failover_active:
+                status_msg = (
+                    f"Переход на резервный сервер #{idx_num}/{total_c}: "
+                    f"{self.master_host}..."
+                )
+            else:
+                status_msg = f"Возврат на основной сервер {self.master_host}..."
+            self.set_state(BMState.CONNECTING, status_msg)
+
+            async def _do_failover_step():
+                await self.disconnect(is_retry=True)
+                await asyncio.sleep(failover_delay)
+                if not self._is_manual_disconnect and my_gen == self._connect_gen:
+                    await self._start_connection_attempt()
+
+            if self._retry_task and not self._retry_task.done():
+                self._retry_task.cancel()
+            self._retry_task = asyncio.create_task(_do_failover_step())
             return False
 
         if self._is_fast_reconnecting:
@@ -333,6 +509,11 @@ class HomeBrewClient:
         my_gen = self._connect_gen
         if self._is_manual_disconnect or my_gen != self._connect_gen:
             return
+        if self._unhealthy_since <= 0.0:
+            self._unhealthy_since = time.time()
+            if not self._failover_active:
+                self._failover_primary_host = self.master_host
+        self._unhealthy_reason = reason
         logger.warning(
             f"[HB] Unexpected disconnect from BM ({reason}). "
             f"Starting fast reconnect protocol (5 attempts, 1s interval)..."
@@ -527,18 +708,39 @@ class HomeBrewClient:
         if len(data) < 4:
             return
 
-        # 1. Master NAK (Auth Failed or Config Rejected)
+        # 1. Master NAK (Auth Failed or Config Rejected or Post-Restart Master DB Desync)
         if data.startswith(b"MSTNAK") or data.startswith(b"RPTNAK"):
-            logger.error(f"[HB] Received NAK from {self.network_label} in state {self.state.value}!")
+            logger.error(f"[HB] Received NAK from {self.network_label} ({self.master_host}) in state {self.state.value}!")
             if self.handshake_timeout_task and not self.handshake_timeout_task.done():
                 self.handshake_timeout_task.cancel()
             if self.state == BMState.AUTHENTICATING:
-                self.set_state(BMState.AUTH_FAILED, f"Неверный пароль хотспота ({self.network_label} NAK)")
-                asyncio.create_task(self.disconnect())
+                creds_known_valid = False
+                if self.check_credentials_valid_cb:
+                    try:
+                        creds_known_valid = bool(self.check_credentials_valid_cb())
+                    except Exception:
+                        creds_known_valid = False
+                is_server_fault_nak = (
+                    self._ever_authenticated_ok
+                    or self._was_connected
+                    or self._unhealthy_since > 0.0
+                    or self._failover_active
+                    or creds_known_valid
+                )
+                if is_server_fault_nak:
+                    logger.warning(
+                        f"[HB] Treating AUTHENTICATING NAK on {self.master_host} (ID {self.effective_repeater_id}) "
+                        f"as abnormal server reaction (ever_ok={self._ever_authenticated_ok}, "
+                        f"unhealthy_since={self._unhealthy_since > 0.0}, creds_valid={creds_known_valid})"
+                    )
+                    self._handle_attempt_failure(f"Неадекватный ответ сервера {self.master_host}: отказ RPTK/NAK при валидном пароле")
+                else:
+                    self.set_state(BMState.AUTH_FAILED, f"Неверный пароль хотспота ({self.network_label} NAK)")
+                    asyncio.create_task(self.disconnect())
             elif self.state == BMState.CONFIGURING:
-                self._handle_attempt_failure(f"Конфигурация отклонена ({self.network_label})")
+                self._handle_attempt_failure(f"Конфигурация отклонена ({self.network_label} {self.master_host})")
             else:
-                self._handle_attempt_failure(f"Соединение отклонено ({self.network_label})")
+                self._handle_attempt_failure(f"Соединение отклонено ({self.network_label} {self.master_host})")
             return
 
         # 2. Challenge packet received while CONNECTING
@@ -558,6 +760,7 @@ class HomeBrewClient:
         if self.state == BMState.AUTHENTICATING:
             if data.startswith(b"RPTACK") or data.startswith(b"MSTACK") or data.startswith(b"RPTA"):
                 logger.info("[HB] Authentication OK! Sending repeater configuration (RPTC)...")
+                self._ever_authenticated_ok = True
                 self.send_config()
                 return
 
@@ -571,8 +774,37 @@ class HomeBrewClient:
                     self._retry_task.cancel()
                     self._retry_task = None
                 self._was_connected = True
+                self._ever_authenticated_ok = True
                 self._is_fast_reconnecting = False
                 self.connect_attempt = 1
+                if self._failover_active:
+                    cand = (
+                        self._failover_candidates[self._failover_index]
+                        if 0 <= self._failover_index < len(self._failover_candidates)
+                        else {"host": self.master_host}
+                    )
+                    idx_num = self._failover_index + 1
+                    total_cands = len(self._failover_candidates)
+                    primary_h = self._failover_primary_host
+                    self._failover_active = False
+                    self._failover_candidates = []
+                    self._failover_index = 0
+                    self._failover_candidate_attempts = 0
+                    self._unhealthy_since = 0.0
+                    self._unhealthy_reason = ""
+                    self._failover_primary_host = self.master_host
+                    self._emit_failover_event({
+                        "event": "failover_succeeded",
+                        "primary_host": primary_h,
+                        "new_host": self.master_host,
+                        "candidate": cand,
+                        "index": idx_num,
+                        "total_candidates": total_cands,
+                    })
+                else:
+                    self._unhealthy_since = 0.0
+                    self._unhealthy_reason = ""
+                    self._failover_primary_host = self.master_host
                 self.set_state(BMState.ONLINE, f"Подключен к {self.network_label}")
                 self.last_keepalive_rx = time.time()
                 self._start_keepalive_task()
@@ -697,6 +929,12 @@ class HomeBrewClient:
             self._is_manual_disconnect = True
             self._was_connected = False
             self._is_fast_reconnecting = False
+            self._unhealthy_since = 0.0
+            self._unhealthy_reason = ""
+            self._failover_active = False
+            self._failover_candidates = []
+            self._failover_index = 0
+            self._failover_candidate_attempts = 0
             if self._retry_task and not self._retry_task.done():
                 self._retry_task.cancel()
                 self._retry_task = None

@@ -951,7 +951,8 @@ Object.defineProperty(window, 'isLogVisible', { get: () => isLogVisible, set: (v
       let tgCellTitle = "";
 
       if (isAllStarCall) {
-        const targetNode = c.dst_id || (window.radioState && window.radioState.allstar_node) || "45113";
+        const callHsObj = (window.currentHotspots || []).find(h => h.id === (c.hotspot_id || "default"));
+        const targetNode = c.dst_id || (callHsObj && callHsObj.allstar_node) || (window.radioState && window.radioState.allstar_node) || "1999";
         tgText = `Node ${targetNode}`;
         tgDisplayHtml = `<span class="asl-node-badge-text">Node <strong>${targetNode}</strong></span>`;
         tgDesc = "RX/TX";
@@ -1046,7 +1047,7 @@ Object.defineProperty(window, 'isLogVisible', { get: () => isLogVisible, set: (v
         ? `<span class="live-duration-tick duration-active" data-start="${c.timestamp}">🔴 ${elapsed}${sUnit}</span>` 
         : `<span class="duration-text" style="color: #ffffff;">${c.duration ? c.duration + sUnit : '—'}</span>`;
 
-      const locationInfo = isTx ? "" : (c.city ? `${c.city}, ${country.name}` : country.name);
+      const locationInfo = (isTx && !isAllStarCall) ? "" : (c.city ? `${c.city}, ${country.name}` : country.name);
       const plainTitle = `${(isTx ? '[TX] ' : '')}${baseCaller.replace(/<[^>]+>/g, '')}${locationInfo ? ' - ' + locationInfo : ''}`;
       
       const hsObj = (window.currentHotspots || []).find(h => h.id === (c.hotspot_id || "default"));

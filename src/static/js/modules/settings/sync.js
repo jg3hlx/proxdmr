@@ -4,8 +4,8 @@
  * local storage dumps) and syncs them bi-directionally with the backend.
  */
 
-import { resolveHotspotId } from "../network/ping-sparklines.js";
-import { updateSlotLangBadge } from "../dmr/transcriber.js?v=2.9.564";
+import { resolveHotspotId } from "../network/ping-sparklines.js?v=2.9.594";
+import { updateSlotLangBadge } from "../dmr/transcriber.js?v=2.9.628";
 
 let clientSettingsSyncTimer = null;
 
@@ -46,22 +46,28 @@ export function getClientSettingsSnapshot() {
       "3": JSON.parse(localStorage.getItem("proxdmr_audio_tx_preset_3") || "null")
     };
   } catch (_) {}
+  let aslTxPresets = {};
+  try {
+    aslTxPresets = {
+      "1": JSON.parse(localStorage.getItem("proxdmr_asl_audio_tx_preset_1") || "null"),
+      "2": JSON.parse(localStorage.getItem("proxdmr_asl_audio_tx_preset_2") || "null"),
+      "3": JSON.parse(localStorage.getItem("proxdmr_asl_audio_tx_preset_3") || "null")
+    };
+  } catch (_) {}
 
   const audioRx = {
-    pre_gain_db: parseFloat(localStorage.getItem("proxdmr_pre_gain_db") || "0") || 0,
-    agc_profile: localStorage.getItem("proxdmr_agc_profile") || "standard",
-    agc_max_gain_db: parseFloat(localStorage.getItem("proxdmr_agc_max_gain_db") || "12") || 12,
-    agc_min_gain_db: parseFloat(localStorage.getItem("proxdmr_agc_min_gain_db") || "-12") || -12,
-    agc_hang_time: parseFloat(localStorage.getItem("proxdmr_agc_hang_time") || "0.35") || 0.35,
-    agc_enabled: localStorage.getItem("proxdmr_agc") !== "false",
-    eq_low: parseFloat(localStorage.getItem("proxdmr_eq_low") || "0") || 0,
-    eq_mid: parseFloat(localStorage.getItem("proxdmr_eq_mid") || "0") || 0,
-    eq_high: parseFloat(localStorage.getItem("proxdmr_eq_high") || "0") || 0,
-    deemphasis: localStorage.getItem("proxdmr_deemphasis") === "true",
     active_preset: localStorage.getItem("proxdmr_audio_rx_active_preset") || "1",
-    jitter_buffer_ms: Math.max(40, Math.min(2000, parseInt(localStorage.getItem("proxdmr_jitter_buffer_ms") || "180", 10) || 180)),
-    backend_buffer_ms: Math.max(0, Math.min(2000, parseInt(localStorage.getItem("proxdmr_backend_buffer_ms") || "0", 10) || 0)),
+    jitter_buffer_ms: Math.max(40, Math.min(2000, parseInt(localStorage.getItem("proxdmr_jitter_buffer_ms") || "120", 10) || 120)),
     presets: rxPresets
+  };
+  const aslAudioRx = {
+    active_preset: localStorage.getItem("proxdmr_asl_audio_rx_active_preset") || "1",
+    jitter_buffer_ms: Math.max(40, Math.min(2000, parseInt(localStorage.getItem("proxdmr_asl_jitter_buffer_ms") || "80", 10) || 80)),
+    presets: {
+      "1": JSON.parse(localStorage.getItem("proxdmr_asl_audio_rx_preset_1") || "null"),
+      "2": JSON.parse(localStorage.getItem("proxdmr_asl_audio_rx_preset_2") || "null"),
+      "3": JSON.parse(localStorage.getItem("proxdmr_asl_audio_rx_preset_3") || "null")
+    }
   };
 
     const rawFec = localStorage.getItem("proxdmr_dsdfme_fec_tolerance");
@@ -81,21 +87,43 @@ export function getClientSettingsSnapshot() {
     };
 
     const rawPres = localStorage.getItem("proxdmr_tx_presence");
-    const parsedPres = rawPres !== null ? parseFloat(rawPres) : 3;
-    const presenceBoost = isNaN(parsedPres) ? 3 : parsedPres;
+    const parsedPres = rawPres !== null ? parseFloat(rawPres) : 0;
+    const presenceBoost = isNaN(parsedPres) ? 0 : parsedPres;
 
     const audioTx = {
       mic_gain: parseFloat(localStorage.getItem("proxdmr_tx_mic_gain") || "0") || 0,
-      noise_suppression: localStorage.getItem("proxdmr_tx_ns") !== "false",
+      noise_suppression: localStorage.getItem("proxdmr_tx_ns") === "true",
       browser_agc: localStorage.getItem("proxdmr_tx_agc") === "true",
       dsp_agc: localStorage.getItem("proxdmr_tx_dsp_agc") === "true",
-      echo_cancellation: localStorage.getItem("proxdmr_tx_aec") !== "false",
+      echo_cancellation: localStorage.getItem("proxdmr_tx_aec") === "true",
       gate_enabled: localStorage.getItem("proxdmr_tx_gate_enabled") !== "false",
       gate_threshold: parseFloat(localStorage.getItem("proxdmr_tx_gate_threshold") || "-45") || -45,
       hpf_enabled: localStorage.getItem("proxdmr_tx_hpf") !== "false",
       presence_boost: presenceBoost,
+      eq_low: parseFloat(localStorage.getItem("proxdmr_tx_eq_low") || "0") || 0,
+      eq_mid: parseFloat(localStorage.getItem("proxdmr_tx_eq_mid") || "0") || 0,
+      eq_high: parseFloat(localStorage.getItem("proxdmr_tx_eq_high") || "0") || 0,
+      eq_preset: localStorage.getItem("proxdmr_tx_eq_preset") || "standard",
       active_preset: localStorage.getItem("proxdmr_audio_tx_active_preset") || "1",
       presets: txPresets
+    };
+
+    const aslAudioTx = {
+      mic_gain: parseFloat(localStorage.getItem("proxdmr_asl_tx_mic_gain") || "0") || 0,
+      noise_suppression: localStorage.getItem("proxdmr_asl_tx_ns") === "true",
+      browser_agc: localStorage.getItem("proxdmr_asl_tx_agc") === "true",
+      dsp_agc: localStorage.getItem("proxdmr_asl_tx_dsp_agc") !== "false",
+      echo_cancellation: localStorage.getItem("proxdmr_asl_tx_aec") === "true",
+      gate_enabled: localStorage.getItem("proxdmr_asl_tx_gate_enabled") !== "false",
+      gate_threshold: parseFloat(localStorage.getItem("proxdmr_asl_tx_gate_threshold") || "-45") || -45,
+      hpf_enabled: localStorage.getItem("proxdmr_asl_tx_hpf") !== "false",
+      presence_boost: parseFloat(localStorage.getItem("proxdmr_asl_tx_presence") || "0") || 0,
+      eq_low: parseFloat(localStorage.getItem("proxdmr_asl_tx_eq_low") || "0") || 0,
+      eq_mid: parseFloat(localStorage.getItem("proxdmr_asl_tx_eq_mid") || "0") || 0,
+      eq_high: parseFloat(localStorage.getItem("proxdmr_asl_tx_eq_high") || "0") || 0,
+      eq_preset: localStorage.getItem("proxdmr_asl_tx_eq_preset") || "standard",
+      active_preset: localStorage.getItem("proxdmr_asl_audio_tx_active_preset") || "1",
+      presets: aslTxPresets
     };
 
 function isTransientTranscribeOrTtsKey(k) {
@@ -145,8 +173,10 @@ function isPersistentUserStorageKey(k) {
 
   return {
     audio_rx: audioRx,
+    asl_audio_rx: aslAudioRx,
     ambe_rx: ambeRx,
     audio_tx: audioTx,
+    asl_audio_tx: aslAudioTx,
     storage_dump: storageDump
   };
 }
@@ -288,6 +318,23 @@ export function applyServerClientSettings(cs) {
     }
   }
 
+  // 2b. Restore structured ASL Audio RX
+  if (cs.asl_audio_rx && typeof cs.asl_audio_rx === "object") {
+    const aslrx = cs.asl_audio_rx;
+    if (aslrx.active_preset) localStorage.setItem("proxdmr_asl_audio_rx_active_preset", aslrx.active_preset.toString());
+    if (aslrx.jitter_buffer_ms !== undefined) localStorage.setItem("proxdmr_asl_jitter_buffer_ms", aslrx.jitter_buffer_ms.toString());
+    if (aslrx.presets && typeof aslrx.presets === "object") {
+      for (const [pid, pdata] of Object.entries(aslrx.presets)) {
+        if (pdata) localStorage.setItem(`proxdmr_asl_audio_rx_preset_${pid}`, typeof pdata === "string" ? pdata : JSON.stringify(pdata));
+      }
+    }
+  }
+
+  // Apply restored RX preset immediately to audioPlayer and DOM sliders!
+  if (typeof window !== "undefined" && typeof window.syncActiveAudioRxPreset === "function") {
+    try { window.syncActiveAudioRxPreset(); } catch (_) {}
+  }
+
   // 3. Restore structured ambe+ RX (Vocoder)
   if (cs.ambe_rx && typeof cs.ambe_rx === "object") {
     const vrx = cs.ambe_rx;
@@ -324,8 +371,8 @@ export function applyServerClientSettings(cs) {
         audio_gain: vrx.audio_gain
       });
     }
-    if (typeof window !== "undefined" && typeof window.updateDsdfmePresetUI === "function") {
-      window.updateDsdfmePresetUI();
+    if (typeof window !== "undefined" && typeof window.updateAudioRxPresetUI === "function") {
+      window.updateAudioRxPresetUI();
     }
   }
 
@@ -378,6 +425,34 @@ export function applyServerClientSettings(cs) {
     if (typeof window !== "undefined" && typeof window.updateAudioTxPresetUI === "function") {
       window.updateAudioTxPresetUI();
     }
+  }
+
+  // 4b. Restore structured ASL Audio TX
+  if (cs.asl_audio_tx && typeof cs.asl_audio_tx === "object") {
+    const asltx = cs.asl_audio_tx;
+    if (asltx.mic_gain !== undefined) localStorage.setItem("proxdmr_asl_tx_mic_gain", asltx.mic_gain);
+    if (asltx.noise_suppression !== undefined) localStorage.setItem("proxdmr_asl_tx_ns", asltx.noise_suppression ? "true" : "false");
+    if (asltx.browser_agc !== undefined) localStorage.setItem("proxdmr_asl_tx_agc", asltx.browser_agc ? "true" : "false");
+    if (asltx.dsp_agc !== undefined) localStorage.setItem("proxdmr_asl_tx_dsp_agc", asltx.dsp_agc ? "true" : "false");
+    if (asltx.echo_cancellation !== undefined) localStorage.setItem("proxdmr_asl_tx_aec", asltx.echo_cancellation ? "true" : "false");
+    if (asltx.gate_enabled !== undefined) localStorage.setItem("proxdmr_asl_tx_gate_enabled", asltx.gate_enabled ? "true" : "false");
+    if (asltx.gate_threshold !== undefined) localStorage.setItem("proxdmr_asl_tx_gate_threshold", asltx.gate_threshold);
+    if (asltx.hpf_enabled !== undefined) localStorage.setItem("proxdmr_asl_tx_hpf", asltx.hpf_enabled ? "true" : "false");
+    if (asltx.presence_boost !== undefined) localStorage.setItem("proxdmr_asl_tx_presence", asltx.presence_boost);
+    if (asltx.eq_low !== undefined) localStorage.setItem("proxdmr_asl_tx_eq_low", asltx.eq_low);
+    if (asltx.eq_mid !== undefined) localStorage.setItem("proxdmr_asl_tx_eq_mid", asltx.eq_mid);
+    if (asltx.eq_high !== undefined) localStorage.setItem("proxdmr_asl_tx_eq_high", asltx.eq_high);
+    if (asltx.eq_preset) localStorage.setItem("proxdmr_asl_tx_eq_preset", asltx.eq_preset);
+    if (asltx.active_preset) localStorage.setItem("proxdmr_asl_audio_tx_active_preset", asltx.active_preset.toString());
+    if (asltx.presets && typeof asltx.presets === "object") {
+      for (const [pid, pdata] of Object.entries(asltx.presets)) {
+        if (pdata) localStorage.setItem(`proxdmr_asl_audio_tx_preset_${pid}`, typeof pdata === "string" ? pdata : JSON.stringify(pdata));
+      }
+    }
+  }
+
+  if (typeof window !== "undefined" && typeof window.syncActiveAudioTxPreset === "function") {
+    try { window.syncActiveAudioTxPreset(); } catch (_) {}
   }
 
   // 5. Update Hotspot UI & Audio Engine

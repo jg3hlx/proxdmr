@@ -41,14 +41,18 @@ export function getHotspotNetworkProfile(card, cid) {
   if (typeof window !== "undefined" && typeof window.getDmrNetworkProfile === "function") {
     return window.getDmrNetworkProfile(netType);
   }
-  const cleanType = String(netType || "bm").trim().toLowerCase();
+  let cleanType = String(netType || "bm").trim().toLowerCase();
+  if (cleanType === "asl" || cleanType === "iax" || cleanType === "allstarlink") {
+    cleanType = "allstar";
+  }
   const fallbackProfiles = {
     bm: { id: "bm", shortLabel: "BM", fullName: "BrandMeister" },
     tgif: { id: "tgif", shortLabel: "TGIF", fullName: "TGIF Network" },
     freedmr: { id: "freedmr", shortLabel: "FDMR", fullName: "FreeDMR / ADN" },
     dmrplus: { id: "dmrplus", shortLabel: "DMR+", fullName: "DMR+ / IPSC2" },
     xlx: { id: "xlx", shortLabel: "XLX", fullName: "XLX Reflector" },
-    custom: { id: "custom", shortLabel: "HBP", fullName: "HomeBrew / HBlink3" }
+    custom: { id: "custom", shortLabel: "HBP", fullName: "HomeBrew / HBlink3" },
+    allstar: { id: "allstar", shortLabel: "ASL", fullName: "AllStarLink (IAX2)" }
   };
   return fallbackProfiles[cleanType] || fallbackProfiles.bm;
 }
@@ -121,6 +125,12 @@ export const CLIENT_PING_SCALE_HOURS = {
   "10m": 10 / 60,
   "1h": 1,
   "6h": 6
+};
+
+export const ASL_PING_SCALE_HOURS = {
+  "2m": 2 / 60,
+  "10m": 10 / 60,
+  "30m": 30 / 60
 };
 
 export let clientSessionStartTime = Math.floor(Date.now() / 1000);
@@ -197,6 +207,11 @@ export function getHotspotPingScale(hotspotId, mode = "bm") {
     if (saved && CLIENT_PING_SCALE_HOURS[saved]) return saved;
     return "1m";
   }
+  if (mode === "allstar") {
+    const saved = localStorage.getItem(`proxdmr_asl_ping_scale_${hid}`);
+    if (saved && ASL_PING_SCALE_HOURS[saved]) return saved;
+    return "2m";
+  }
   const saved = localStorage.getItem(`proxdmr_ping_scale_${hid}`);
   if (saved && PING_SCALE_HOURS[saved]) return saved;
   const globalSaved = localStorage.getItem("proxdmr_ping_scale");
@@ -209,6 +224,10 @@ export function setHotspotPingScale(hotspotId, scale, mode = "bm") {
   if (mode === "client") {
     if (CLIENT_PING_SCALE_HOURS[scale]) {
       localStorage.setItem(`proxdmr_client_ping_scale_${hid}`, scale);
+    }
+  } else if (mode === "allstar") {
+    if (ASL_PING_SCALE_HOURS[scale]) {
+      localStorage.setItem(`proxdmr_asl_ping_scale_${hid}`, scale);
     }
   } else {
     if (PING_SCALE_HOURS[scale]) {
@@ -228,12 +247,21 @@ export function cycleHotspotPingScale(hotspotId, card = null) {
   const activeHotspotId = getActiveHotspotId();
   const hid = resolveHotspotId(hotspotId || (card ? card.dataset.hotspotId : activeHotspotId) || "default");
   const mode = getHotspotPingMode(hid);
+  const netProfile = getHotspotNetworkProfile(card, hid);
+  const isAsl = (netProfile && netProfile.id === "allstar");
+
   if (mode === "client") {
     const current = getHotspotPingScale(hid, "client");
     const scales = ["1m", "10m", "1h", "6h"];
     const idx = scales.indexOf(current);
     const next = scales[(idx + 1) % scales.length];
     setHotspotPingScale(hid, next, "client");
+  } else if (isAsl) {
+    const current = getHotspotPingScale(hid, "allstar");
+    const scales = ["2m", "10m", "30m"];
+    const idx = scales.indexOf(current);
+    const next = scales[(idx + 1) % scales.length];
+    setHotspotPingScale(hid, next, "allstar");
   } else {
     const current = getHotspotPingScale(hid, "bm");
     const scales = ["10m", "1h", "6h", "12h", "24h"];
@@ -383,7 +411,12 @@ export function renderCardPingSparkline(card, hostVal) {
   const cid = resolveHotspotId(rawCid);
   const mode = getHotspotPingMode(cid);
   const isClientMode = (mode === "client");
-  const currentScale = getHotspotPingScale(cid, mode);
+  const netProfile = getHotspotNetworkProfile(card, cid);
+  const isAsl = Boolean(netProfile && netProfile.id === "allstar");
+  const isAslCard = isAsl;
+  const currentScale = isClientMode
+    ? getHotspotPingScale(cid, "client")
+    : (isAsl ? getHotspotPingScale(cid, "allstar") : getHotspotPingScale(cid, "bm"));
 
   const scaleBadge = chartWrap.querySelector(".bm-ping-scale-badge");
   if (scaleBadge) {
@@ -391,8 +424,7 @@ export function renderCardPingSparkline(card, hostVal) {
     scaleBadge.title = ((typeof window !== "undefined" && window.t) ? window.t("ping.scale_badge_title") : "Масштаб (двойной тап для смены)") + ` (${currentScale})`;
   }
 
-  const netProfile = getHotspotNetworkProfile(card, cid);
-  const serverLabel = (netProfile && netProfile.shortLabel) || "BM";
+  const serverLabel = isAslCard ? "HUB/Node" : ((netProfile && netProfile.shortLabel) || "BM");
 
   let modeBadge = chartWrap.querySelector(".bm-ping-mode-badge");
   if (!modeBadge) {
@@ -413,6 +445,64 @@ export function renderCardPingSparkline(card, hostVal) {
             : window.t("ping.mode_bm_tooltip", { network: serverLabel }))
         : `Режим: ${serverLabel}. Кликните по графику для смены на Client ↔ ProxDMR`);
 
+  // Wire interactive gestures early so clicks work even when disconnected or points < 2
+  if (!chartWrap._chartWired) {
+    chartWrap._chartWired = true;
+    let lastClickTime = 0;
+    let clickTimeout = null;
+
+    chartWrap.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const now = Date.now();
+      const currentCid = card.dataset.hotspotId || "default";
+
+      if (now - lastClickTime < 320) {
+        if (clickTimeout) {
+          clearTimeout(clickTimeout);
+          clickTimeout = null;
+        }
+        lastClickTime = 0;
+        cycleHotspotPingScale(currentCid, card);
+      } else {
+        lastClickTime = now;
+        clickTimeout = setTimeout(() => {
+          clickTimeout = null;
+          toggleHotspotPingMode(currentCid, card);
+        }, 320);
+      }
+    });
+
+    chartWrap.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      if (clickTimeout) {
+        clearTimeout(clickTimeout);
+        clickTimeout = null;
+      }
+      const currentCid = card.dataset.hotspotId || "default";
+      cycleHotspotPingScale(currentCid, card);
+    });
+  }
+
+  if (modeBadge && !modeBadge._clickWired) {
+    modeBadge._clickWired = true;
+    modeBadge.style.cursor = "pointer";
+    modeBadge.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const currentCid = card.dataset.hotspotId || "default";
+      toggleHotspotPingMode(currentCid, card);
+    });
+  }
+
+  if (scaleBadge && !scaleBadge._clickWired) {
+    scaleBadge._clickWired = true;
+    scaleBadge.style.cursor = "pointer";
+    scaleBadge.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const currentCid = card.dataset.hotspotId || "default";
+      cycleHotspotPingScale(currentCid, card);
+    });
+  }
+
   const svg = chartWrap.querySelector(".bm-ping-sparkline");
   if (!svg) return;
 
@@ -429,10 +519,9 @@ export function renderCardPingSparkline(card, hostVal) {
   const nowSec = Math.floor(Date.now() / 1000);
   const windowHours = isClientMode
     ? (CLIENT_PING_SCALE_HOURS[currentScale] || (1 / 60))
-    : (PING_SCALE_HOURS[currentScale] || 1);
+    : (isAslCard ? (ASL_PING_SCALE_HOURS[currentScale] || (2 / 60)) : (PING_SCALE_HOURS[currentScale] || 1));
   const windowStartSec = nowSec - Math.round(windowHours * 3600);
 
-  let currentPing = null;
   let pts = [];
   if (isClientMode) {
     const clientHist = getClientPingHistory();
@@ -453,7 +542,7 @@ export function renderCardPingSparkline(card, hostVal) {
     const clientRtt = getCachedClientRtt();
     const ws = (typeof window !== "undefined" && window.ws);
     const isWsOpen = Boolean(ws && ws.readyState === WebSocket.OPEN);
-    currentPing = (isWsOpen && clientRtt !== null && !isNaN(clientRtt)) ? clientRtt : null;
+    const currentPing = (isWsOpen && clientRtt !== null && !isNaN(clientRtt)) ? clientRtt : null;
     if (pts.length === 0 && currentPing !== null) {
       pts = [
         { t: windowStartSec, ping: currentPing, host: "gw", isCurrent: true },
@@ -538,14 +627,9 @@ export function renderCardPingSparkline(card, hostVal) {
     // If history has fewer than 2 points, synthesize flat line using current ping if available
     const hostPings = (typeof window !== "undefined" && window.cachedBmHostPings) || cachedBmHostPings;
     const bmPings = (typeof window !== "undefined" && window.cachedBmPings) || {};
-    const isAslNet = Boolean(netProfile && netProfile.id === "allstar");
-    currentPing = isAslNet
-      ? ((bmPings && bmPings[cid] !== undefined && bmPings[cid] !== null) ? bmPings[cid] : ((hostPings && hostPings[hostVal] !== undefined) ? hostPings[hostVal] : null))
-      : ((hostPings && hostPings[hostVal] !== undefined) ? hostPings[hostVal] : (bmPings && bmPings[cid] !== undefined ? bmPings[cid] : null));
-
-    if ((currentPing === null || isNaN(currentPing)) && card && card._lastServerPingMs !== undefined && card._lastServerPingMs !== null) {
-      currentPing = card._lastServerPingMs;
-    }
+    const currentPing = (hostPings && hostPings[hostVal] !== undefined)
+      ? hostPings[hostVal]
+      : (bmPings && bmPings[cid] !== undefined ? bmPings[cid] : null);
 
     if (pts.length === 0 && currentPing !== null && !isNaN(currentPing)) {
       pts = [
@@ -557,6 +641,27 @@ export function renderCardPingSparkline(card, hostVal) {
     }
   }
 
+  // Для AllStarLink: если узел не подключен к внешнему ХН/HUB, показываем надпись * disconnect *
+  let discOverlay = chartWrap.querySelector(".asl-ping-disconnected-overlay");
+  const isAslDisconnected = isAslCard && !isClientMode && (!hostVal || hostVal === "127.0.0.1" || hostVal === "www.allstarlink.org" || pts.length === 0);
+
+  if (isAslDisconnected) {
+    if (!discOverlay) {
+      discOverlay = document.createElement("div");
+      discOverlay.className = "asl-ping-disconnected-overlay";
+      discOverlay.textContent = "* disconnect *";
+      chartWrap.appendChild(discOverlay);
+    }
+    discOverlay.style.display = "block";
+    areaPath.setAttribute("d", "");
+    linePath.setAttribute("d", "");
+    dot.setAttribute("display", "none");
+    chartWrap._latestCoords = null;
+    return;
+  } else if (discOverlay) {
+    discOverlay.style.display = "none";
+  }
+
   // Clear chart if no points are usable
   if (pts.length < 2) {
     areaPath.setAttribute("d", "");
@@ -566,26 +671,11 @@ export function renderCardPingSparkline(card, hostVal) {
     return;
   }
 
-  // Ensure last point is anchored to current time (x = 100%) when node is active and receiving ping telemetry
+  // Ensure last point is anchored to current time ONLY IF link is active and last point was recent
   const lastRaw = pts[pts.length - 1];
-  const isAslNet = Boolean(netProfile && netProfile.id === "allstar");
-  const isLinkActive = isClientMode
-    ? Boolean(window.ws && window.ws.readyState === WebSocket.OPEN)
-    : (isAslNet
-        ? Boolean(currentPing !== null && !isNaN(Number(currentPing)) && Number(currentPing) >= 0)
-        : true);
+  const isLinkActive = isClientMode ? Boolean(window.ws && window.ws.readyState === WebSocket.OPEN) : true;
   const maxAnchorSec = isClientMode ? 3 : 12;
-  const hasValidCurrentPing = (currentPing !== null && !isNaN(Number(currentPing)) && Number(currentPing) >= 0);
-
-  if (isLinkActive && hasValidCurrentPing && nowSec - lastRaw.t > 0) {
-    pts.push({
-      t: nowSec,
-      ping: Number(currentPing),
-      host: isClientMode ? "gw" : hostVal,
-      isCurrent: true,
-      yNorm: lastRaw ? lastRaw.yNorm : undefined
-    });
-  } else if (isLinkActive && nowSec - lastRaw.t > 0 && nowSec - lastRaw.t <= maxAnchorSec) {
+  if (isLinkActive && nowSec - lastRaw.t > 0 && nowSec - lastRaw.t <= maxAnchorSec) {
     pts.push({
       t: nowSec,
       ping: lastRaw.ping,
@@ -808,54 +898,9 @@ export function renderCardPingSparkline(card, hostVal) {
     dot.removeAttribute("display");
   }
 
-  // Wire interactive gestures once per chartWrap
-  if (!chartWrap._chartWired) {
-    chartWrap._chartWired = true;
-
-    let lastClickTime = 0;
-    let clickTimeout = null;
-
-    chartWrap.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const now = Date.now();
-      const currentCid = card.dataset.hotspotId || "default";
-
-      if (now - lastClickTime < 320) {
-        // Double click detected: cycle scale!
-        if (clickTimeout) {
-          clearTimeout(clickTimeout);
-          clickTimeout = null;
-        }
-        lastClickTime = 0;
-        cycleHotspotPingScale(currentCid, card);
-      } else {
-        lastClickTime = now;
-        clickTimeout = setTimeout(() => {
-          clickTimeout = null;
-          // Single click: toggle mode (BM <-> Client)!
-          toggleHotspotPingMode(currentCid, card);
-        }, 320);
-      }
-    });
-
-    chartWrap.addEventListener("dblclick", (e) => {
-      e.stopPropagation();
-      if (clickTimeout) {
-        clearTimeout(clickTimeout);
-        clickTimeout = null;
-      }
-      const currentCid = card.dataset.hotspotId || "default";
-      cycleHotspotPingScale(currentCid, card);
-    });
-
-    if (scaleBadge) {
-      scaleBadge.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const currentCid = card.dataset.hotspotId || "default";
-        cycleHotspotPingScale(currentCid, card);
-      });
-    }
-
+  // Wire tooltip interactions once per chartWrap
+  if (!chartWrap._tooltipWired) {
+    chartWrap._tooltipWired = true;
     const tooltip = chartWrap.querySelector(".bm-ping-tooltip");
     const handleMove = (clientX) => {
       const coordsList = chartWrap._latestCoords || coords;

@@ -1,7 +1,7 @@
 import { safeEscapeHtml } from './modules/core/formatters.js?v=2.9.380';
 import { RecordingsManager } from './modules/audio/player.js?v=2.9.556';
 import './modules/ui/theme.js?v=2.9.541';
-import './modules/dmr/bm-monitor.js?v=2.9.547';
+import './modules/dmr/bm-monitor.js?v=2.9.623';
 import './modules/dmr/log-selection.js';
 import {
   handleCallTranscription,
@@ -27,22 +27,21 @@ import {
   updateSlotLangBadge,
   getCurrentTranscriberModel,
   selectTranscriberModel
-} from './modules/dmr/transcriber.js?v=2.9.564';
+} from './modules/dmr/transcriber.js?v=2.9.628';
 import { blePtt } from './modules/ptt/ble.js';
 import { initApkUpdater } from './modules/core/updater.js?v=2.9.367';
 import { initAndroidBridge } from './modules/core/android.js?v=2.9.552';
-import { setupDsdfmeModal } from './modules/settings/vocoder.js?v=2.9.367';
 import { initAuth, initAccountManager } from './modules/settings/account.js';
-import { initLanguageManager } from './modules/settings/language.js?v=2.9.555';
-import { initHamQthSettings } from './modules/settings/hamqth.js';
+import { initLanguageManager } from './modules/settings/language.js?v=2.9.624';
+import { initHamQthSettings } from './modules/settings/hamqth.js?v=2.9.628';
 import { initGeneralSettings } from './modules/settings/general.js?v=2.9.509';
 import { initAlertsSettings } from './modules/settings/alerts.js?v=2.9.509';
-import { initSystemUpdater } from './modules/settings/system-updater.js?v=2.9.562';
+import { initSystemUpdater } from './modules/settings/system-updater.js?v=2.9.628';
 import { initOrientationLock } from './modules/ui/orientation.js';
 import {
   initQuickAssign,
   renderQuickMemButtons
-} from './modules/dmr/quick-assign.js?v=2.9.563';
+} from './modules/dmr/quick-assign.js?v=2.9.603';
 import { initStationClocks, updateClocks } from './modules/ui/clocks.js';
 import {
   renderTranscriptionSummary
@@ -60,7 +59,7 @@ import {
   renderContactsTree,
   findNodeInTree,
   findParentNodeInTree
-} from './modules/dmr/contacts.js?v=2.9.561';
+} from './modules/dmr/contacts.js?v=2.9.627';
 import {
   initWatchdog,
   startSystemLinkWatchdog,
@@ -77,7 +76,7 @@ import {
   openEditHotspotForm,
   applyActiveHotspotToUI,
   switchActiveHotspot
-} from './modules/dmr/hotspots.js?v=2.9.560';
+} from './modules/dmr/hotspots.js?v=2.9.628';
 import {
   initBmTgStaticManager
 } from './modules/dmr/bm-static-manager.js?v=2.9.372';
@@ -85,16 +84,20 @@ import {
   initAudioRouting
 } from './modules/audio/routing.js?v=2.9.564';
 import {
-  initAudioDsp
-} from './modules/audio/dsp.js?v=2.9.525';
+  initAudioDsp,
+  syncActiveAudioRxPreset
+} from './modules/audio/dsp.js?v=2.9.628';
+import {
+  setupDsdfmeModal
+} from './modules/settings/vocoder.js?v=2.9.628';
 import {
   initPttEngine,
   updatePttLockUI,
   checkPttConnectionStatus,
   notifyPttConnectionBlocked
-} from './modules/ptt/engine.js?v=2.9.542';
-import { initAboutModal } from './modules/ui/about.js';
-import { initNavigation, pushNavState, closePrimaryModals } from './modules/ui/navigation.js?v=2.9.542';
+} from './modules/ptt/engine.js?v=2.9.628';
+import { initAboutModal } from './modules/ui/about.js?v=2.9.625';
+import { initNavigation, pushNavState, closePrimaryModals } from './modules/ui/navigation.js?v=2.9.614';
 import {
   initFullscreen,
   toggleFullscreen,
@@ -107,7 +110,7 @@ import {
   handleBmBenchmarkComplete,
   handleBmBenchmarkProgress,
   setBenchmarkRunningUI
-} from './modules/dmr/bm-benchmark.js?v=2.9.367';
+} from './modules/dmr/bm-benchmark.js?v=2.9.609';
 import {
   getHotspotSlot,
   setCardSlot,
@@ -126,7 +129,7 @@ import {
   selectHotspotTargetId,
   getStoredLastRx,
   saveStoredLastRx
-} from './modules/ui/vfo-display.js?v=2.9.547';
+} from './modules/ui/vfo-display.js?v=2.9.578';
 import {
   loadCardPingHistory,
   saveCardPingHistory,
@@ -145,12 +148,12 @@ import {
   updatePingElement,
   calculateCardPacketLoss,
   calculateClientPacketLoss
-} from './modules/network/ping-sparklines.js?v=2.9.495';
+} from './modules/network/ping-sparklines.js?v=2.9.594';
 import {
   getClientSettingsSnapshot,
   scheduleSyncClientSettings,
   applyServerClientSettings
-} from './modules/settings/sync.js?v=2.9.547';
+} from './modules/settings/sync.js?v=2.9.625';
 import {
   initVolumeMute,
   isMuteOnPttEnabled,
@@ -189,7 +192,7 @@ import {
   isSystemVolumeSyncEnabled,
   setSystemVolumeSyncEnabled,
   onSystemVolumeChanged
-} from './modules/audio/volume-mute.js?v=2.9.564';
+} from './modules/audio/volume-mute.js?v=2.9.624';
 import {
   KNOWN_BM_MASTERS,
   getBmFlagBadgeHtml,
@@ -201,13 +204,13 @@ import {
   updateRxBannerFreshness,
   updateCardRxLiveBanner,
   updateRxLiveBanner
-} from './modules/dmr/bm-banner.js?v=2.9.496';
+} from './modules/dmr/bm-banner.js?v=2.9.590';
 import {
   currentBmStatus,
   isTogglingConnection,
   updateBmStatus,
   toggleHotspotConnection
-} from './modules/dmr/bm-status.js?v=2.9.555';
+} from './modules/dmr/bm-status.js?v=2.9.624';
 import {
   connectWebSocket,
   handleServerMessage,
@@ -216,7 +219,7 @@ import {
   lastReportedClientRtt,
   serverClockOffsetSec,
   pingTimer
-} from './modules/network/ws.js?v=2.9.564';
+} from './modules/network/ws.js?v=2.9.623';
 
 /**
  * ProxDMR Duplex & Multi-Instance Web Application
@@ -376,9 +379,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (isAuthOpen || isDemoClick || window.isDemoMode || window.isUserSwl || document.body.classList.contains("is-demo-mode")) {
       return;
     }
-    if (typeof window.initAudio === "function") {
-      window.initAudio().catch(() => {});
-    }
   };
   document.addEventListener("pointerdown", unlockAudio, { once: true });
   document.addEventListener("keydown", unlockAudio, { once: true });
@@ -388,8 +388,6 @@ document.addEventListener("DOMContentLoaded", () => {
     try { window.blePtt.init(); } catch(e) { console.warn("[BLE] init error", e); }
   }
 
-  // Vocoder settings
-  setupDsdfmeModal();
 
   function initRecordingsManager() {
     window.recordingsManager = new RecordingsManager();
@@ -470,6 +468,12 @@ document.addEventListener("DOMContentLoaded", () => {
   initVolumeMute();
   initAudioRouting();
   initAudioDsp();
+  // syncActiveAudioRxPreset() is intentionally NOT called here.
+  // It would read DOM sliders before the WebAudio graph is built (initSync runs on
+  // first user interaction), resulting in stale/default EQ values being written to filters.
+  // The correct initialization happens in initSync() which force-applies gains directly
+  // from this.eq10Gains (loaded from localStorage in the constructor).
+  setupDsdfmeModal();
   initPttEngine();
   initHotspotsManager();
   initBmBenchmark();

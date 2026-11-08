@@ -7,7 +7,7 @@
 import { safeEscapeHtml, escapeHtml, isoToEmoji, getLocalizedCountryName, getCountryInfo, getFlagBadgeHtml, getCleanTgDesc } from '../core/formatters.js?v=2.9.380';
 import { initGridDragReorder } from '../ui/grid-drag-reorder.js?v=2.9.469';
 import { showToast } from '../core/toast.js';
-import { pushNavState, notifyNavClosed } from '../ui/navigation.js';
+import { pushNavState, notifyNavClosed } from '../ui/navigation.js?v=2.9.614';
 import { openBmBenchmarkModal } from './bm-benchmark.js';
 import { openBmTgStaticModal, dropDynamicTGs } from './bm-static-manager.js?v=2.9.372';
 import {
@@ -34,7 +34,7 @@ import {
   disableHotspotTranscribe,
   ensureCaptionFontControls,
   setupCaptionBoxPinchZoom
-} from './transcriber.js?v=2.9.564';
+} from './transcriber.js?v=2.9.628';
 import {
   startTransmission,
   stopTransmission,
@@ -46,9 +46,9 @@ import {
   getHotspotPttMode,
   checkPttConnectionStatus,
   notifyPttConnectionBlocked
-} from '../ptt/engine.js?v=2.9.367';
+} from '../ptt/engine.js?v=2.9.628';
 import { wireCardStatusInteractions, renderHotspotAuxStatusBadge, checkBmApiStatus, updateHotspotGwStatus, triggerHotspotGwAction, isHotspotGwDisconnected } from '../network/watchdog.js';
-import { getDmrNetworkProfile, getNetworkServersList, renderNetworkBadgeElement, updateCardNetworkBadge, refreshFreeDmrServers, sortServersForDropdown, getBmServerInfo, resolveCardMasterInfo } from './bm-banner.js?v=2.9.496';
+import { getDmrNetworkProfile, getNetworkServersList, renderNetworkBadgeElement, updateCardNetworkBadge, refreshFreeDmrServers, sortServersForDropdown, getBmServerInfo, resolveCardMasterInfo } from './bm-banner.js?v=2.9.590';
 import { checkServerApkUpdate, updateApkUpdateUI } from '../core/updater.js?v=2.9.367';
 import { showLongPressEffect } from '../ui/long-press.js';
 
@@ -125,6 +125,9 @@ export function setActiveHotspotId(val) {
   const id = val || "default";
   activeHotspotId = id;
   window.activeHotspotId = id;
+  if (typeof window !== "undefined" && typeof window.syncActiveAudioRxPreset === "function") {
+    try { window.syncActiveAudioRxPreset(id); } catch (_) {}
+  }
   return id;
 }
 
@@ -232,6 +235,14 @@ export async function loadHotspots() {
       renderHotspotsList();
       renderRadiosGrid();
       applyActiveHotspotToUI();
+      if (typeof window !== "undefined") {
+        if (typeof window.syncActiveAudioRxPreset === "function") {
+          try { window.syncActiveAudioRxPreset(activeHotspotId); } catch (_) {}
+        }
+        if (typeof window.syncActiveAudioTxPreset === "function") {
+          try { window.syncActiveAudioTxPreset(activeHotspotId); } catch (_) {}
+        }
+      }
       const curHsEl = document.getElementById("editHsId");
       const curHsId = curHsEl ? curHsEl.value : activeHotspotId;
       const curHsObj = curHs.find(h => h.id === curHsId) || curHs[0];
@@ -330,6 +341,14 @@ export function switchActiveHotspot(newId) {
       updatePttLockUI();
     }
     updateHotspotVolumeAndMuteUI(newId);
+    if (typeof window !== "undefined") {
+      if (typeof window.syncActiveAudioRxPreset === "function") {
+        try { window.syncActiveAudioRxPreset(newId); } catch (_) {}
+      }
+      if (typeof window.syncActiveAudioTxPreset === "function") {
+        try { window.syncActiveAudioTxPreset(newId); } catch (_) {}
+      }
+    }
   }
 export function triggerAddNewHotspot() {
     const callsignDisplay = document.getElementById("callsignDisplay");
@@ -2002,9 +2021,8 @@ export function syncAslMatrixButtonsState(card, targetHs) {
     btn.classList.toggle("asl-node-connecting-tx", isConnecting && connMode === "*3");
     btn.classList.toggle("asl-node-disconnecting", isDisconnecting);
 
-    // Indication of currently talking node (keyed: true / RX)
-    const isTalking = Boolean(n && keyedSet.has(n));
-    btn.classList.toggle("asl-node-rx-talking", isTalking);
+    // Bright blue RX talking glow on memory matrix cards is disabled
+    btn.classList.remove("asl-node-rx-talking");
 
     const descEl = btn.querySelector(".asl-btn-desc");
     const label = (descEl && descEl.textContent && descEl.textContent !== "[настроить]") ? descEl.textContent : "";
@@ -2097,9 +2115,9 @@ export function syncAslMatrixButtonsState(card, targetHs) {
       }
       const lblPrefix = label ? label + " " : "";
       if (linkMode === "*2") {
-        btn.title = window.t ? window.t("asl.node_tooltip_monitor", { label: lblPrefix, node: n, probe: probeSuffix }, `${lblPrefix}(#${n}) [Монитор *2] — Клик: переключить на Передачу (*3), Удержание: отключить узел (*1)${probeSuffix}`) : `${lblPrefix}(#${n}) [Монитор *2] — Клик: переключить на Передачу (*3), Удержание: отключить узел (*1)${probeSuffix}`;
+        btn.title = window.t ? window.t("asl.node_tooltip_monitor", { label: lblPrefix, node: n, probe: probeSuffix }, `${lblPrefix}(#${n}) [Монитор *2] — Клик: отключить узел (*1), Удержание: меню действий${probeSuffix}`) : `${lblPrefix}(#${n}) [Монитор *2] — Клик: отключить узел (*1), Удержание: меню действий${probeSuffix}`;
       } else if (linkMode === "*3") {
-        btn.title = window.t ? window.t("asl.node_tooltip_tx", { label: lblPrefix, node: n, probe: probeSuffix }, `${lblPrefix}(#${n}) [Передача *3] — Клик: переключить на Монитор (*2), Удержание: отключить узел (*1)${probeSuffix}`) : `${lblPrefix}(#${n}) [Передача *3] — Клик: переключить на Монитор (*2), Удержание: отключить узел (*1)${probeSuffix}`;
+        btn.title = window.t ? window.t("asl.node_tooltip_tx", { label: lblPrefix, node: n, probe: probeSuffix }, `${lblPrefix}(#${n}) [Передача *3] — Клик: отключить узел (*1), Удержание: меню действий${probeSuffix}`) : `${lblPrefix}(#${n}) [Передача *3] — Клик: отключить узел (*1), Удержание: меню действий${probeSuffix}`;
       } else {
         btn.title = window.t ? window.t("asl.node_tooltip_idle", { label: lblPrefix, node: n, probe: probeSuffix }, `${lblPrefix}(#${n}) - Клик: подключить, Удержание: изменить${probeSuffix}`) : `${lblPrefix}(#${n}) - Клик: подключить, Удержание: изменить${probeSuffix}`;
       }
@@ -2244,27 +2262,27 @@ export function openAslCardEditPopover({ idx, cid, card, targetHs, userNodes }) 
 
     <div class="asl-edit-role-switch">
       <button type="button" class="asl-role-pill ${selectedRole === "node" ? "active-node" : ""}" data-role="node">
-        🌐 Узел
+        ${window.t ? window.t("asl.role_node_pill", {}, "🌐 Узел") : "🌐 Узел"}
       </button>
       <button type="button" class="asl-role-pill ${selectedRole === "dtmf" ? "active-dtmf" : ""}" data-role="dtmf">
-        ☎️ DTMF Макрос
+        ${window.t ? window.t("asl.role_dtmf_pill", {}, "☎️ DTMF Макрос") : "☎️ DTMF Макрос"}
       </button>
     </div>
 
     <div class="asl-edit-row asl-edit-row-autocomplete">
-      <label class="asl-edit-label" id="aslEditCodeLabel">${selectedRole === "dtmf" ? "Команда DTMF:" : "Номер узла:"}</label>
-      <input type="text" class="asl-edit-input" id="aslEditNodeInput" value="${safeEscapeHtml(curItem.node || "")}" placeholder="${selectedRole === "dtmf" ? "Напр. *81, *70, 73#" : "Напр. 41522, 28554"}" autocomplete="off" />
+      <label class="asl-edit-label" id="aslEditCodeLabel">${selectedRole === "dtmf" ? (window.t ? window.t("asl.edit_dtmf_label", {}, "Команда DTMF:") : "Команда DTMF:") : (window.t ? window.t("asl.edit_node_label", {}, "Номер узла:") : "Номер узла:")}</label>
+      <input type="text" class="asl-edit-input" id="aslEditNodeInput" value="${safeEscapeHtml(curItem.node || "")}" placeholder="${selectedRole === "dtmf" ? (window.t ? window.t("asl.dtmf_placeholder", {}, "Напр. *81, *70, 73#") : "Напр. *81, *70, 73#") : (window.t ? window.t("contacts.ph_asl_node", {}, "напр. 45113") : "Напр. 41522, 28554")}" autocomplete="off" />
       <div class="asl-edit-autocomplete-dropdown" id="aslEditAutocompleteDropdown" style="display:none;"></div>
     </div>
 
     <div class="asl-edit-row">
-      <label class="asl-edit-label">Подпись:</label>
-      <input type="text" class="asl-edit-input" id="aslEditLabelInput" value="${safeEscapeHtml(curItem.label || "")}" placeholder="Короткое имя" maxlength="18" autocomplete="off" />
+      <label class="asl-edit-label">${window.t ? window.t("asl.edit_caption_label", {}, "Подпись:") : "Подпись:"}</label>
+      <input type="text" class="asl-edit-input" id="aslEditLabelInput" value="${safeEscapeHtml(curItem.label || "")}" placeholder="${window.t ? window.t("asl.label_placeholder", {}, "Короткое имя") : "Короткое имя"}" maxlength="18" autocomplete="off" />
     </div>
 
     <div class="asl-edit-actions">
-      <button type="button" class="asl-edit-btn asl-edit-cancel">Отмена</button>
-      <button type="button" class="asl-edit-btn asl-edit-save">Сохранить</button>
+      <button type="button" class="asl-edit-btn asl-edit-cancel">${window.t ? window.t("buttons.cancel", {}, "Отмена") : "Отмена"}</button>
+      <button type="button" class="asl-edit-btn asl-edit-save">${window.t ? window.t("buttons.save", {}, "Сохранить") : "Сохранить"}</button>
     </div>
   `;
 
@@ -2286,11 +2304,11 @@ export function openAslCardEditPopover({ idx, cid, card, targetHs, userNodes }) 
       b.classList.toggle("active-dtmf", b.dataset.role === "dtmf" && role === "dtmf");
     });
     if (role === "dtmf") {
-      if (codeLabel) codeLabel.textContent = "Команда DTMF:";
-      if (nodeInput) nodeInput.placeholder = "Напр. *81, *70, 73#";
+      if (codeLabel) codeLabel.textContent = window.t ? window.t("asl.edit_dtmf_label", {}, "Команда DTMF:") : "Команда DTMF:";
+      if (nodeInput) nodeInput.placeholder = window.t ? window.t("asl.dtmf_placeholder", {}, "Напр. *81, *70, 73#") : "Напр. *81, *70, 73#";
     } else {
-      if (codeLabel) codeLabel.textContent = "Номер узла:";
-      if (nodeInput) nodeInput.placeholder = "Напр. 41522";
+      if (codeLabel) codeLabel.textContent = window.t ? window.t("asl.edit_node_label", {}, "Номер узла:") : "Номер узла:";
+      if (nodeInput) nodeInput.placeholder = window.t ? window.t("contacts.ph_asl_node", {}, "напр. 45113") : "Напр. 41522";
     }
   };
 
@@ -3020,32 +3038,41 @@ export function openAslScanSettingsPopover(cid, anchorEl, card) {
   if (!anchorEl || !card) return;
 
   const cfg = getAslScanConfig(cid);
+  const secUnit = window.t ? window.t("live.sec", {}, "s") : "s";
+  const titleTxt = window.t ? window.t("asl.scan_settings_title", {}, "⚙️ Настройки сканирования ASL") : "⚙️ Настройки сканирования ASL";
+  const timerBtnTxt = window.t ? window.t("asl.scan_mode_timer", {}, "⏱ Таймер") : "⏱ Таймер";
+  const waitBtnTxt = window.t ? window.t("asl.scan_mode_wait", {}, "🎙 Ожидание") : "🎙 Ожидание";
+  const timerBtnTip = window.t ? window.t("asl.scan_mode_timer_tip", {}, "Фиксированное время на активном узле") : "Фиксированное время на активном узле";
+  const waitBtnTip = window.t ? window.t("asl.scan_mode_wait_tip", {}, "До окончания передачи + таймер отпускания") : "До окончания передачи + таймер отпускания";
+  const timerLbl = window.t ? window.t("asl.scan_timer_label", {}, "Таймер активности (сек):") : "Таймер активности (сек):";
+  const releaseLbl = window.t ? window.t("asl.scan_release_label", {}, "Таймер отпускания (сек):") : "Таймер отпускания (сек):";
+
   const popover = document.createElement("div");
   popover.className = "asl-scan-settings-popover";
   popover.innerHTML = `
     <div class="scan-popover-title">
-      <span>⚙️ Настройки сканирования ASL</span>
+      <span>${safeEscapeHtml(titleTxt)}</span>
       <span class="scan-popover-close">✕</span>
     </div>
     <div class="scan-mode-toggle">
-      <button type="button" class="scan-mode-btn ${cfg.mode === "timer" ? "active" : ""}" data-mode="timer" title="Фиксированное время на активном узле">
-        ⏱ Таймер
+      <button type="button" class="scan-mode-btn ${cfg.mode === "timer" ? "active" : ""}" data-mode="timer" title="${safeEscapeHtml(timerBtnTip)}">
+        ${safeEscapeHtml(timerBtnTxt)}
       </button>
-      <button type="button" class="scan-mode-btn ${cfg.mode === "wait" ? "active" : ""}" data-mode="wait" title="До окончания передачи + таймер отпускания">
-        🎙 Ожидание
+      <button type="button" class="scan-mode-btn ${cfg.mode === "wait" ? "active" : ""}" data-mode="wait" title="${safeEscapeHtml(waitBtnTip)}">
+        ${safeEscapeHtml(waitBtnTxt)}
       </button>
     </div>
     <div class="scan-field-group scan-group-timer" style="display: ${cfg.mode === "timer" ? "block" : "none"};">
       <div class="scan-field-label">
-        <span>Таймер активности (сек):</span>
-        <span class="scan-field-val" id="aslScanTimerVal">${cfg.timerHoldSec}с</span>
+        <span>${safeEscapeHtml(timerLbl)}</span>
+        <span class="scan-field-val" id="aslScanTimerVal">${cfg.timerHoldSec}${safeEscapeHtml(secUnit)}</span>
       </div>
       <input type="range" id="aslScanTimerRange" min="5" max="120" step="5" value="${cfg.timerHoldSec}">
     </div>
     <div class="scan-field-group scan-group-wait" style="display: ${cfg.mode === "wait" ? "block" : "none"};">
       <div class="scan-field-label">
-        <span>Таймер отпускания (сек):</span>
-        <span class="scan-field-val" id="aslScanReleaseVal">${cfg.releaseHoldSec}с</span>
+        <span>${safeEscapeHtml(releaseLbl)}</span>
+        <span class="scan-field-val" id="aslScanReleaseVal">${cfg.releaseHoldSec}${safeEscapeHtml(secUnit)}</span>
       </div>
       <input type="range" id="aslScanReleaseRange" min="1" max="45" step="1" value="${cfg.releaseHoldSec}">
     </div>
@@ -3077,7 +3104,7 @@ export function openAslScanSettingsPopover(cid, anchorEl, card) {
     timerRange.oninput = (e) => {
       e.stopPropagation();
       cfg.timerHoldSec = parseInt(timerRange.value, 10);
-      if (timerVal) timerVal.textContent = `${cfg.timerHoldSec}с`;
+      if (timerVal) timerVal.textContent = `${cfg.timerHoldSec}${secUnit}`;
       saveAslScanConfig(cid, cfg);
     };
   }
@@ -3088,7 +3115,7 @@ export function openAslScanSettingsPopover(cid, anchorEl, card) {
     releaseRange.oninput = (e) => {
       e.stopPropagation();
       cfg.releaseHoldSec = parseInt(releaseRange.value, 10);
-      if (releaseVal) releaseVal.textContent = `${cfg.releaseHoldSec}с`;
+      if (releaseVal) releaseVal.textContent = `${cfg.releaseHoldSec}${secUnit}`;
       saveAslScanConfig(cid, cfg);
     };
   }
@@ -3244,7 +3271,9 @@ async function rollRandomKeyedAslNode(cid, card, targetHs, userNodes, diceBtn) {
       stopAslMatrixScan(cid, card, targetHs, { keepCurrentLink: true, silent: true });
     }
 
-    const activeList = await fetchActiveKeyedAslNodes();
+    const activeListPromise = fetchActiveKeyedAslNodes();
+    const minAnimPromise = new Promise(resolve => setTimeout(resolve, 550));
+    const [activeList] = await Promise.all([activeListPromise, minAnimPromise]);
     const ownNode = String((targetHs && targetHs.allstar_node) || "").trim();
 
     const connectedSet = new Set();
@@ -3455,23 +3484,64 @@ export function updateAslVfoHeader(card, hs = null) {
       : (window.t ? window.t("asl.header_badge_standby", {}, "Узел ASL3 в режиме ожидания (нет активных линков)") : "Узел ASL3 в режиме ожидания (нет активных линков)");
   }
 
+  // 1. Режим ожидания: ТОЛЬКО свой позывной, шрифтом на пункт больше, без точек и надписи "Ожидание"
   if (!isLinked) {
-    const idleText = window.t ? window.t("asl.vfo_idle", {}, "Ожидание") : "Ожидание";
-    callsignEl.innerHTML = `<span class="asl-vfo-callsign">${safeEscapeHtml(myCall)}</span><span class="asl-vfo-sep">·</span><span class="asl-vfo-linktext">${safeEscapeHtml(idleText)}</span>`;
+    const idleKey = `idle_${myCall}`;
+    if (callsignEl._lastAslVfoKey === idleKey) return;
+    callsignEl._lastAslVfoKey = idleKey;
+    callsignEl.classList.remove("has-asl-marquee");
+    callsignEl.innerHTML = `<span class="asl-vfo-callsign asl-vfo-standby">${safeEscapeHtml(myCall)}</span>`;
     callsignEl.removeAttribute("title");
     return;
   }
 
+  // 2. Режим подключения: вместо позывного выводится название узла с его ID
   const { label, flag } = getAslNodeShortInfo(connNode, targetHs, cid);
-  const fallbackConnected = window.t ? window.t("asl.vfo_connected", {}, "Подключено") : "Подключено";
-  const displayLabel = label || fallbackConnected;
+  let displayTitle = "";
+  if (label && label !== connNode) {
+    displayTitle = `${label} (${connNode})`;
+  } else {
+    displayTitle = `Узел #${connNode}`;
+  }
+
   const flagHtml = flag ? `<span class="asl-vfo-hub-flag">${safeEscapeHtml(flag)}</span> ` : "";
   const countStr = (targetHs && targetHs.asl_online_count !== undefined && targetHs.asl_online_count > 1) ? ` (${targetHs.asl_online_count})` : "";
 
-  callsignEl.innerHTML = `<span class="asl-vfo-callsign">${safeEscapeHtml(myCall)}</span><span class="asl-vfo-sep">·</span><span class="asl-vfo-linktext">${flagHtml}<strong class="asl-vfo-target-node">${safeEscapeHtml(displayLabel)}</strong>${countStr}</span>`;
+  const vfoKey = `linked_${connNode}_${displayTitle}_${countStr}_${flag}`;
+  if (callsignEl._lastAslVfoKey === vfoKey) {
+    return;
+  }
+  callsignEl._lastAslVfoKey = vfoKey;
+
+  const itemHtml = `<span class="asl-vfo-marquee-item">${flagHtml}<strong class="asl-vfo-target-node">${safeEscapeHtml(displayTitle)}</strong>${countStr}</span>`;
+
+  callsignEl.innerHTML = `<div class="asl-vfo-marquee-track"><div class="asl-vfo-marquee-inner">${itemHtml}</div></div>`;
   callsignEl.title = window.t
-    ? window.t("asl.vfo_tooltip_node", { node: connNode, label: displayLabel }, `Узел #${connNode}: ${displayLabel}`)
-    : `Узел #${connNode}: ${displayLabel}`;
+    ? window.t("asl.vfo_tooltip_node", { node: connNode, label: displayTitle }, `Узел #${connNode}: ${displayTitle}`)
+    : `Узел #${connNode}: ${displayTitle}`;
+
+  // 3. Замер переполнения для бесшовной бесконечной бегущей строки (Seamless Infinite Marquee)
+  requestAnimationFrame(() => {
+    const track = callsignEl.querySelector(".asl-vfo-marquee-track");
+    const inner = callsignEl.querySelector(".asl-vfo-marquee-inner");
+    const item = callsignEl.querySelector(".asl-vfo-marquee-item");
+    if (!track || !inner || !item) return;
+
+    const diff = item.scrollWidth - track.clientWidth;
+    if (diff > 4) {
+      const sep = `<span class="asl-vfo-marquee-sep" aria-hidden="true">&nbsp;---&nbsp;</span>`;
+      inner.innerHTML = `${itemHtml}${sep}${itemHtml}${sep}`;
+      callsignEl.classList.add("has-asl-marquee");
+      track.classList.add("asl-marquee-active");
+      const halfWidth = Math.max(100, Math.round(inner.scrollWidth / 2));
+      const durSec = Math.max(7, Math.min(30, Math.round(halfWidth / 28)));
+      track.style.setProperty("--asl-marquee-dur", `${durSec}s`);
+    } else {
+      callsignEl.classList.remove("has-asl-marquee");
+      track.classList.remove("asl-marquee-active");
+      track.style.removeProperty("--asl-marquee-dur");
+    }
+  });
 }
 
 export function updateCardAllStarPanel(card, hs) {
@@ -3525,6 +3595,22 @@ export function updateCardAllStarPanel(card, hs) {
             if (establishedFirst || targetHs.asl_online_count > 0) {
               targetHs.connected_node = establishedFirst;
               targetHs.is_asl_linked = Boolean(establishedFirst);
+            }
+            if (data.rtt !== null && data.rtt !== undefined && !isNaN(Number(data.rtt)) && Number(data.rtt) > 0) {
+              const rttInt = Math.round(Number(data.rtt));
+              if (typeof window !== "undefined") {
+                if (!window.cachedBmPings) window.cachedBmPings = {};
+                window.cachedBmPings[cid] = rttInt;
+              }
+              if (targetHs.connected_node) {
+                const hKey = `asl_node_${targetHs.connected_node}`;
+                if (typeof window !== "undefined") {
+                  if (!window.cachedBmHostPings) window.cachedBmHostPings = {};
+                  window.cachedBmHostPings[hKey] = rttInt;
+                  if (!window.cachedBmHostLosses) window.cachedBmHostLosses = {};
+                  window.cachedBmHostLosses[hKey] = 0.0;
+                }
+              }
             }
             updateAslVfoHeader(card, targetHs);
             if (Array.isArray(links)) {
@@ -3785,12 +3871,12 @@ export function updateCardAllStarPanel(card, hs) {
           </button>
           <button type="button" class="btn-allstar-dice${targetHs && targetHs._aslDiceRolling ? " dice-rolling" : ""}" title="${safeEscapeHtml(diceBtnTitle)}" aria-label="${safeEscapeHtml(diceBtnTitle)}" data-i18n-title="asl.dice_btn_title" data-i18n-aria-label="asl.dice_btn_title">
             <svg class="asl-dice-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="3" y="3" width="18" height="18" rx="3.5" fill="currentColor" fill-opacity="0.14"/>
-              <circle cx="8" cy="8" r="1.45" fill="currentColor" stroke="none"/>
-              <circle cx="16" cy="8" r="1.45" fill="currentColor" stroke="none"/>
-              <circle cx="12" cy="12" r="1.45" fill="currentColor" stroke="none"/>
-              <circle cx="8" cy="16" r="1.45" fill="currentColor" stroke="none"/>
-              <circle cx="16" cy="16" r="1.45" fill="currentColor" stroke="none"/>
+              <rect class="dice-border" x="3" y="3" width="18" height="18" rx="3.5" fill="currentColor" fill-opacity="0.14"/>
+              <circle class="dice-dot dot-1" cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/>
+              <circle class="dice-dot dot-2" cx="16" cy="8" r="1.5" fill="currentColor" stroke="none"/>
+              <circle class="dice-dot dot-3" cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+              <circle class="dice-dot dot-4" cx="8" cy="16" r="1.5" fill="currentColor" stroke="none"/>
+              <circle class="dice-dot dot-5" cx="16" cy="16" r="1.5" fill="currentColor" stroke="none"/>
             </svg>
           </button>
         </div>
@@ -3844,10 +3930,11 @@ export function updateCardAllStarPanel(card, hs) {
         <!-- Разделитель-шторка (Notch Handle) -->
         <div class="asl-dock-notch" id="aslDockNotch_${cid}" title="${window.t ? window.t("asl.notch_title", {}, "Свайп вниз или клик: текст транскрибации") : "Свайп вниз или клик: текст транскрибации"}" role="button" tabindex="0" aria-label="${window.t ? window.t("asl.notch_title", {}, "Свайп вниз или клик: текст транскрибации") : "Свайп вниз или клик: текст транскрибации"}" data-i18n-title="asl.notch_title" data-i18n-aria-label="asl.notch_title">
           <span class="asl-notch-pages" aria-hidden="true">${[0, 1, 2].map(pg => `<i class="asl-notch-seg${pg === aslCurPage ? " is-active" : ""}" data-page="${pg}" title="${window.t ? window.t("asl.page_indicator_title", { page: pg + 1, total: ASL_PAGE_COUNT }, `Экран ${pg + 1} из ${ASL_PAGE_COUNT}`) : `Экран ${pg + 1} из ${ASL_PAGE_COUNT}`}"></i>`).join("")}</span>
+          <span class="asl-notch-dash-badge" id="aslNotchDashBadge_${cid}" aria-hidden="true">DASHBOARD 4×5</span>
         </div>
 
-        <!-- Нижняя секция: Память узлов — 3 экрана по 5х4 кнопок быстрого вызова (по умолчанию открыта) -->
-        <div class="asl-matrix-container" id="aslMatrixContainer_${cid}">
+        <!-- Нижняя секция: Память узлов (3 экрана 4х5) ИЛИ Дашборд узла (матрица 4х5 с вертикальным скроллом) -->
+        <div class="asl-matrix-container${targetHs && targetHs._aslDashMatrixOpen ? " is-dash-view" : ""}" id="aslMatrixContainer_${cid}">
           <div class="asl-pages-viewport" id="aslPagesViewport_${cid}">
           ${[0, 1, 2].map(pg => {
             const pgPos = ((pg - aslCurPage + 4) % 3) - 1;
@@ -3891,9 +3978,9 @@ export function updateCardAllStarPanel(card, hs) {
               } else if (isDtmf) {
                 titleText = window.t ? window.t("asl.dtmf_tooltip", { code: nodeNum }, `Макрос DTMF «${nodeNum}» — Клик: передать DTMF (авто-TX), Удержание: меню действий`) : `Макрос DTMF «${nodeNum}» — Клик: передать DTMF (авто-TX), Удержание: меню действий`;
               } else if (linkMode === "*2") {
-                titleText = window.t ? window.t("asl.node_tooltip_monitor_menu", { label: pfx, node: cleanNode }, `${pfx}(#${cleanNode}) [Монитор *2] — Клик: переключить на Передачу (*3), Удержание: меню действий`) : `${pfx}(#${cleanNode}) [Монитор *2] — Клик: переключить на Передачу (*3), Удержание: меню действий`;
+                titleText = window.t ? window.t("asl.node_tooltip_monitor_menu", { label: pfx, node: cleanNode }, `${pfx}(#${cleanNode}) [Монитор *2] — Клик: отключить узел (*1), Удержание: меню действий`) : `${pfx}(#${cleanNode}) [Монитор *2] — Клик: отключить узел (*1), Удержание: меню действий`;
               } else if (linkMode === "*3") {
-                titleText = window.t ? window.t("asl.node_tooltip_tx_menu", { label: pfx, node: cleanNode }, `${pfx}(#${cleanNode}) [Передача *3] — Клик: переключить на Монитор (*2), Удержание: меню действий`) : `${pfx}(#${cleanNode}) [Передача *3] — Клик: переключить на Монитор (*2), Удержание: меню действий`;
+                titleText = window.t ? window.t("asl.node_tooltip_tx_menu", { label: pfx, node: cleanNode }, `${pfx}(#${cleanNode}) [Передача *3] — Клик: отключить узел (*1), Удержание: меню действий`) : `${pfx}(#${cleanNode}) [Передача *3] — Клик: отключить узел (*1), Удержание: меню действий`;
               } else {
                 titleText = window.t ? window.t("asl.node_tooltip_menu", { label: pfx, node: cleanNode }, `${pfx}(#${cleanNode}) - Клик: подключить, Удержание: меню действий`) : `${pfx}(#${cleanNode}) - Клик: подключить, Удержание: меню действий`;
               }
@@ -3915,6 +4002,7 @@ export function updateCardAllStarPanel(card, hs) {
             </div>`;
           }).join("")}
           </div>
+          <div class="asl-dash-grid-viewport" id="aslDashGridViewport_${cid}"></div>
         </div>
       </div>
     `;
@@ -4440,7 +4528,7 @@ export function updateCardAllStarPanel(card, hs) {
       });
     };
 
-    // Connect node on click / edit on long-press (для всех кнопок матрицы)
+    // Connect / disconnect node on click / context menu on long-press (для всех кнопок матрицы)
     vfoAllStar.querySelectorAll(".btn-allstar-node").forEach(btn => {
       let isLongPress = false;
       const idx = parseInt(btn.dataset.idx, 10);
@@ -4451,6 +4539,7 @@ export function updateCardAllStarPanel(card, hs) {
         if (btn.dataset.linkMode === "*2" || btn.dataset.linkMode === "*3") return true;
         if (btn.dataset.connecting === "true") return true;
         if (targetHs && targetHs._aslConnectingNodes instanceof Map && targetHs._aslConnectingNodes.has(n)) return true;
+        if (targetHs && String(targetHs.connected_node || "").trim() === n) return true;
         if (targetHs && Array.isArray(targetHs.asl_links)) {
           return targetHs.asl_links.some(x => String(x.node).trim() === n);
         }
@@ -4486,25 +4575,6 @@ export function updateCardAllStarPanel(card, hs) {
             window.updateHotspotTsAudioModeUI(cid);
           }
           aslConnectNodeProcedure(cid, cleanTargetN, "*3", { showStatusBanner: true, showCardEffects: true });
-          return;
-        }
-
-        const existingLink = (targetHs && Array.isArray(targetHs.asl_links))
-          ? targetHs.asl_links.find(x => String(x.node).trim() === cleanTargetN)
-          : null;
-        const currentLinkMode = (existingLink && existingLink.mode) || btn.dataset.linkMode || "";
-
-        if (currentLinkMode === "*2" || currentLinkMode === "*3") {
-          const nextMode = (currentLinkMode === "*2") ? "*3" : "*2";
-          if (targetHs) targetHs._aslLinkMode = nextMode;
-          btn.dataset.linkMode = nextMode;
-          if (typeof window.setHotspotAslMode === "function") {
-            window.setHotspotAslMode(cid, nextMode);
-          }
-          if (typeof window.updateHotspotTsAudioModeUI === "function") {
-            window.updateHotspotTsAudioModeUI(cid);
-          }
-          aslConnectNodeProcedure(cid, cleanTargetN, nextMode, { showStatusBanner: true, showCardEffects: true });
           return;
         }
 
@@ -4597,14 +4667,24 @@ export function updateCardAllStarPanel(card, hs) {
         }
 
         // Если ячейка пустая -> открываем настройку узла
-        if (!btn.dataset.node) {
+        const clickedNode = String(btn.dataset.node || "").trim();
+        if (!clickedNode) {
           triggerEdit();
           return;
         }
 
         // Если это карточка DTMF-макроса!
         if (btn.dataset.role === "dtmf") {
-          executeAslDtmfMacroAction(cid, card, btn, cleanNode);
+          executeAslDtmfMacroAction(cid, card, btn, clickedNode);
+          return;
+        }
+
+        // Если карточка уже законекчена (или подключается) -> одинарный клик производит её дисконнект
+        if (isNodeCurrentlyLinked()) {
+          if (targetHs && targetHs._aslScanActive) {
+            stopAslMatrixScan(cid, card, targetHs, { keepCurrentLink: false, silent: true });
+          }
+          triggerDisconnectNode(clickedNode);
           return;
         }
 
@@ -4761,137 +4841,114 @@ export function updateCardAllStarPanel(card, hs) {
 
     // Add button removed - strict single-node mode enforced
 
-    // CTCSS filter pair setup for AllStar
-    const dsdPair = card.querySelector(".control-pair-btn.dsd-pair");
-    let ctcssPair = card.querySelector(".control-pair-btn.allstar-ctcss-pair");
+    // "Dashboard node" + Auto-Open Checkbox pair setup for AllStar
+    const audioRxPair = card.querySelector(".control-pair-btn.audio-rx-pair");
+    const oldCtcssPair = card.querySelector(".control-pair-btn.allstar-ctcss-pair");
+    if (oldCtcssPair) oldCtcssPair.remove();
     const oldCodecPair = card.querySelector(".control-pair-btn.allstar-codec-pair");
     if (oldCodecPair) oldCodecPair.remove();
 
-    if (dsdPair) dsdPair.style.setProperty("display", "none", "important");
-    if (!ctcssPair && dsdPair && dsdPair.parentElement) {
-      ctcssPair = document.createElement("div");
-      ctcssPair.className = "control-pair-btn allstar-ctcss-pair ctcss-mode-filter";
-      ctcssPair.innerHTML = `
-        <button type="button" class="btn-action-trigger btn-asl-ctcss-trigger" title="Фильтр CTCSS субтонов (< 300 Гц): срезает низкочастотный гул (67–254 Гц) аналоговых репитеров. Кликните для быстрого переключения Filter ⇄ Bypass.">
-          <span class="btn-action-label">CTCSS</span>
+    const dsdPair = card.querySelector(".control-pair-btn.dsd-pair, .control-pair-btn.ambe-pair");
+    if (dsdPair) dsdPair.style.display = "none";
+
+    let dashPair = card.querySelector(".control-pair-btn.allstar-dash-pair");
+    if (!dashPair && audioRxPair && audioRxPair.parentElement) {
+      const btnTitle = window.t
+        ? window.t("asl.dash_btn_title", {}, "Открыть / закрыть дашборд подключенного узла (список всех участников хаба и индикация говорящего)")
+        : "Открыть / закрыть дашборд подключенного узла (список всех участников хаба и индикация говорящего)";
+      const chkTitle = window.t
+        ? window.t("asl.dash_auto_title", {}, "Автооткрытие дашборда узла при подключении")
+        : "Автооткрытие дашборда узла при подключении";
+      const btnLabel = window.t
+        ? window.t("asl.dash_btn_label", {}, "Dashboard")
+        : "Dashboard";
+
+      dashPair = document.createElement("div");
+      dashPair.className = "control-pair-btn allstar-dash-pair";
+      dashPair.innerHTML = `
+        <button type="button" class="btn-action-trigger btn-asl-dash-trigger" title="${safeEscapeHtml(btnTitle)}" data-i18n-title="asl.dash_btn_title">
+          <span class="btn-action-label" data-i18n="asl.dash_btn_label">${safeEscapeHtml(btnLabel)}</span>
         </button>
-        <div class="preset-dropdown-wrapper">
-          <button type="button" class="btn-mini-preset btn-asl-ctcss-mini-preset" data-dropdown="asl-ctcss" title="Режим фильтра CTCSS (Filter / Bypass)">
-            <span class="mini-preset-label">Filter</span>
-            <span class="mini-preset-caret">▾</span>
-          </button>
-          <div class="mini-preset-menu asl-ctcss-menu">
-            <button type="button" class="mini-preset-item active" data-ctcss="filter" title="Фильтр высоких частот (HPF 300 Гц): срезает субтоны и низкочастотный рокот репитеров">
-              <span class="mini-preset-name">Filter (300Hz)</span>
-            </button>
-            <button type="button" class="mini-preset-item" data-ctcss="bypass" title="Прямой пропуск звука без фильтра субтонов (Bypass)">
-              <span class="mini-preset-name">Bypass</span>
-            </button>
-          </div>
+        <div class="preset-dropdown-wrapper asl-dash-auto-wrap" title="${safeEscapeHtml(chkTitle)}" data-i18n-title="asl.dash_auto_title">
+          <label class="asl-dash-auto-label">
+            <input type="checkbox" class="chk-asl-dash-auto" aria-label="${safeEscapeHtml(chkTitle)}" />
+          </label>
         </div>
       `;
-      dsdPair.parentElement.insertBefore(ctcssPair, dsdPair);
+      audioRxPair.parentElement.insertBefore(dashPair, audioRxPair);
     }
-    if (ctcssPair) {
-      ctcssPair.style.display = "inline-flex";
-      const isFilter = (localStorage.getItem(`proxdmr_asl_ctcss_${cid}`) !== "bypass");
-      const ctcssLabel = ctcssPair.querySelector(".mini-preset-label");
-      const actionTrigger = ctcssPair.querySelector(".btn-asl-ctcss-trigger");
-      const miniBtn = ctcssPair.querySelector(".btn-asl-ctcss-mini-preset");
-      const menu = ctcssPair.querySelector(".asl-ctcss-menu");
 
-      const updateCTCSSUI = (enabled) => {
-        if (ctcssLabel) {
-          ctcssLabel.textContent = enabled ? "Filter" : "Bypass";
-        }
-        if (ctcssPair) {
-          ctcssPair.classList.toggle("ctcss-mode-filter", enabled);
-          ctcssPair.classList.toggle("ctcss-mode-bypass", !enabled);
-        }
-        if (actionTrigger) {
-          actionTrigger.title = enabled
-            ? "CTCSS: Filter ВКЛЮЧЕН (HPF 300 Гц, срезает гул субтонов 67–254 Гц). Кликните для переключения в Bypass."
-            : "CTCSS: Bypass (звук без фильтра субтонов). Кликните для включения фильтра 300 Гц.";
-        }
-        if (menu) {
-          menu.querySelectorAll(".mini-preset-item").forEach(it => {
-            const val = it.dataset.ctcss === "filter";
-            it.classList.toggle("active", val === enabled);
-          });
-        }
-      };
-
-      updateCTCSSUI(isFilter);
-
-      // Send state to backend on card init
-      const ws = (typeof getWs === "function" ? getWs() : window.ws);
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "allstar_ctcss_filter", hotspot_id: cid, enabled: isFilter }));
+    if (dashPair) {
+      dashPair.style.display = "inline-flex";
+      const isDashOpenForCard = Boolean(targetHs && targetHs._aslDashMatrixOpen);
+      dashPair.classList.toggle("dash-open", isDashOpenForCard);
+      if (sliderContainer) {
+        sliderContainer.classList.toggle("is-dash-mode", isDashOpenForCard);
+      }
+      if (isDashOpenForCard) {
+        renderAslNodeDashboard(cid);
       }
 
-      // Main button: 1-click toggle Filter ⇄ Bypass
+      const actionTrigger = dashPair.querySelector(".btn-asl-dash-trigger");
+      const autoWrap = dashPair.querySelector(".asl-dash-auto-wrap");
+      const autoChk = dashPair.querySelector(".chk-asl-dash-auto");
+
+      const isAutoOpen = isAslDashAutoOpenEnabled(cid);
+      if (autoChk) {
+        autoChk.checked = isAutoOpen;
+      }
+
+      // Keep backend CTCSS 300Hz HPF filter enabled by default
+      const ws = (typeof getWs === "function" ? getWs() : window.ws);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "allstar_ctcss_filter", hotspot_id: cid, enabled: true }));
+      }
+
       if (actionTrigger && !actionTrigger._wired) {
         actionTrigger._wired = true;
         actionTrigger.onclick = (e) => {
           e.stopPropagation();
-          const current = (localStorage.getItem(`proxdmr_asl_ctcss_${cid}`) !== "bypass");
-          const next = !current;
-          localStorage.setItem(`proxdmr_asl_ctcss_${cid}`, next ? "filter" : "bypass");
-          updateCTCSSUI(next);
-          const currentWs = (typeof getWs === "function" ? getWs() : window.ws);
-          if (currentWs && currentWs.readyState === WebSocket.OPEN) {
-            currentWs.send(JSON.stringify({ type: "allstar_ctcss_filter", hotspot_id: cid, enabled: next }));
-          }
-          if (typeof showToast === "function") {
-            showToast(
-              next ? "🔔 CTCSS: Filter включен (HPF 300 Гц, срез субтонов)" : "🔕 CTCSS: Bypass (прямой пропуск звука)",
-              next ? "info" : "warning",
-              1800
-            );
+          if (typeof window.toggleAslNodeDashboard === "function") {
+            window.toggleAslNodeDashboard(cid);
           }
         };
       }
 
-      // Dropdown menu toggle
-      if (miniBtn && menu && !miniBtn._wired) {
-        miniBtn._wired = true;
-        miniBtn.onclick = (e) => {
+      if (autoWrap && autoChk && !autoChk._wired) {
+        autoChk._wired = true;
+        autoWrap.onclick = (e) => {
           e.stopPropagation();
-          menu.classList.toggle("open");
+          if (e.target !== autoChk) {
+            autoChk.checked = !autoChk.checked;
+            autoChk.dispatchEvent(new Event("change"));
+          }
         };
-        menu.querySelectorAll(".mini-preset-item").forEach(item => {
-          item.onclick = (e) => {
-            e.stopPropagation();
-            const mode = item.dataset.ctcss || "filter";
-            const next = (mode === "filter");
-            localStorage.setItem(`proxdmr_asl_ctcss_${cid}`, next ? "filter" : "bypass");
-            updateCTCSSUI(next);
-            menu.classList.remove("open");
-            const currentWs = (typeof getWs === "function" ? getWs() : window.ws);
-            if (currentWs && currentWs.readyState === WebSocket.OPEN) {
-              currentWs.send(JSON.stringify({ type: "allstar_ctcss_filter", hotspot_id: cid, enabled: next }));
-            }
-            if (typeof showToast === "function") {
-              showToast(
-                next ? "🔔 CTCSS: Filter включен (HPF 300 Гц, срез субтонов)" : "🔕 CTCSS: Bypass (прямой пропуск)",
-                next ? "info" : "warning",
-                1800
-              );
-            }
-          };
-        });
+        autoChk.onchange = (e) => {
+          e.stopPropagation();
+          const enabled = Boolean(autoChk.checked);
+          setAslDashAutoOpenEnabled(cid, enabled);
+          if (typeof showToast === "function") {
+            const msgOn = window.t
+              ? window.t("asl.dash_auto_on_toast", {}, "✅ Автооткрытие дашборда узла при коннекте включено")
+              : "✅ Автооткрытие дашборда узла при коннекте включено";
+            const msgOff = window.t
+              ? window.t("asl.dash_auto_off_toast", {}, "⏸️ Автооткрытие дашборда узла при коннекте отключено")
+              : "⏸️ Автооткрытие дашборда узла при коннекте отключено";
+            showToast(enabled ? msgOn : msgOff, "info", 2000);
+          }
+        };
       }
     }
 
-    // Wire Contacts button on AllStar card to open the ASL directory tab
+    // Wire Contacts button on AllStar card to open contacts filtered for AllStar (with ASL Directory tab in header)
     const contactsBtn = card.querySelector(".btn-my-contacts") || card.querySelector(".btn-open-contacts");
     if (contactsBtn && !contactsBtn._aslWired) {
       contactsBtn._aslWired = true;
-      contactsBtn.title = "Справочник контактов и узлов AllStarLink";
+      contactsBtn.title = window.t ? window.t("contacts.btn_open_title", {}, "Справочник контактов и узлов AllStarLink") : "Справочник контактов и узлов AllStarLink";
       contactsBtn.onclick = (e) => {
         e.stopPropagation();
         if (typeof window.openMyContactsModal === "function") {
-          window.openMyContactsModal(cid, "allstar");
+          window.openMyContactsModal(cid, "dmr");
         }
       };
     }
@@ -4903,7 +4960,7 @@ export function updateCardAllStarPanel(card, hs) {
       btnAslDir.onclick = (e) => {
         e.stopPropagation();
         if (typeof window.openMyContactsModal === "function") {
-          window.openMyContactsModal(cid, "allstar");
+          window.openMyContactsModal(cid, "allstar_dir");
         }
       };
     }
@@ -4912,15 +4969,16 @@ export function updateCardAllStarPanel(card, hs) {
     const quickInput = card.querySelector(".quick-tg-input");
     const quickBox = card.querySelector(".quick-tg-box");
     const quickApply = card.querySelector(".btn-quick-tg-apply");
+    const aslDialTip = window.t ? window.t("asl.quick_dial_node_tip", {}, "Быстрый набор номера ноды AllStarLink (Enter для подключения)") : "Быстрый набор номера ноды AllStarLink (Enter для подключения)";
     if (quickInput) {
       quickInput.placeholder = "Node #";
-      quickInput.setAttribute("title", "Быстрый набор номера ноды AllStarLink (Enter для подключения)");
+      quickInput.setAttribute("title", aslDialTip);
     }
     if (quickBox) {
-      quickBox.setAttribute("title", "Быстрый переход на ноду AllStarLink (введите номер ноды и нажмите Enter или кнопку)");
+      quickBox.setAttribute("title", aslDialTip);
     }
     if (quickApply) {
-      quickApply.setAttribute("title", "Подключиться к ноде AllStarLink");
+      quickApply.setAttribute("title", aslDialTip);
     }
 
     // Direct JS visibility toggle for ASL directory button
@@ -4954,25 +5012,28 @@ export function updateCardAllStarPanel(card, hs) {
       if (vfoTs1) vfoTs1.style.removeProperty("display");
     }
     if (vfoTs2) vfoTs2.style.removeProperty("display");
-    const dsdPair = card.querySelector(".control-pair-btn.dsd-pair");
+    const dsdPair = card.querySelector(".control-pair-btn.dsd-pair, .control-pair-btn.ambe-pair");
+    if (dsdPair) dsdPair.style.removeProperty("display");
     const codecPair = card.querySelector(".control-pair-btn.allstar-codec-pair");
     const ctcssPair = card.querySelector(".control-pair-btn.allstar-ctcss-pair");
-    if (dsdPair) dsdPair.style.removeProperty("display");
+    const dashPair = card.querySelector(".control-pair-btn.allstar-dash-pair");
     if (codecPair) codecPair.style.display = "none";
     if (ctcssPair) ctcssPair.style.display = "none";
+    if (dashPair) dashPair.style.display = "none";
 
     const quickInput = card.querySelector(".quick-tg-input");
     const quickBox = card.querySelector(".quick-tg-box");
     const quickApply = card.querySelector(".btn-quick-tg-apply");
+    const tgDialTip = window.t ? window.t("vfo.quick_tg_input_title", {}, "Быстрый набор TG на передачу (введите номер и нажмите Enter или кнопку)") : "Быстрый набор TG на передачу (введите номер и нажмите Enter или кнопку)";
     if (quickInput) {
       quickInput.placeholder = "TG #";
-      quickInput.setAttribute("title", "Быстрый набор TG на передачу (введите номер и нажмите Enter или кнопку)");
+      quickInput.setAttribute("title", tgDialTip);
     }
     if (quickBox) {
-      quickBox.setAttribute("title", "Быстрый набор TG на передачу (введите номер и нажмите Enter или кнопку)");
+      quickBox.setAttribute("title", tgDialTip);
     }
     if (quickApply) {
-      quickApply.setAttribute("title", "Установить TalkGroup для передачи");
+      quickApply.setAttribute("title", tgDialTip);
     }
   }
 }
@@ -5349,36 +5410,10 @@ export function renderRadiosGrid() {
         window.recordingsManager.updateCardTranscribeUI(hs.id);
       }
 
-      // Delete button strictly for secondary hotspots (idx > 0)
+      // Delete button is removed from card header (deletion is exclusively handled in Hotspot Settings)
       const delBtn = card.querySelector(".hotspot-delete-btn");
       if (delBtn) {
-        if (idx > 0 && displayHotspots.length > 1) {
-          delBtn.style.display = "inline-block";
-          delBtn.onclick = async (e) => {
-            e.stopPropagation();
-            const ok = await (window.showAppConfirm ? window.showAppConfirm({
-              title: window.t ? window.t("hotspots.delete_confirm_title", {}, "Удаление хотспота") : "Удаление хотспота",
-              icon: "🗑️",
-              message: window.t ? window.t("hotspots.delete_virtual_confirm_msg", { name: hs.name }, `Удалить виртуальный хотспот "${hs.name}"?`) : `Удалить виртуальный хотспот "${hs.name}"?`,
-              confirmText: window.t ? window.t("buttons.delete", {}, "Удалить") : "Удалить",
-              confirmStyle: "danger"
-            }) : Promise.resolve(confirm(`Удалить виртуальный хотспот "${hs.name}"?`)));
-            if (ok) {
-              if (typeof disableHotspotTranscribe === "function") {
-                disableHotspotTranscribe(hs.id, true);
-              }
-              await fetch(`/api/hotspots/${hs.id}`, { method: "DELETE" });
-              const gw = (typeof window !== "undefined" && window.contactsGateway) || null;
-              if (gw && (String(gw.hotspot_id) === String(hs.id) || resolveHotspotId(gw.hotspot_id) === resolveHotspotId(hs.id))) {
-                gw.hotspot_id = "default";
-                saveContactsToServer();
-              }
-              await loadHotspots();
-            }
-          };
-        } else {
-          delBtn.style.display = "none";
-        }
+        delBtn.remove();
       }
 
       // Status badges
@@ -5627,8 +5662,7 @@ export function renderRadiosGrid() {
             e.stopPropagation();
             const cid = card.dataset.hotspotId || hs.id;
             switchActiveHotspot(cid);
-            const netType = ((hs && hs.network_type) || card.dataset.networkType || "bm").toLowerCase();
-            openMyContactsModal(cid, netType === "allstar" ? "allstar" : "dmr");
+            openMyContactsModal(cid, "dmr");
           };
         }
 
@@ -5639,7 +5673,7 @@ export function renderRadiosGrid() {
             const cid = card.dataset.hotspotId || hs.id;
             switchActiveHotspot(cid);
             if (typeof openMyContactsModal === "function") {
-              openMyContactsModal(cid, "allstar");
+              openMyContactsModal(cid, "allstar_dir");
             }
           };
         }
@@ -5885,6 +5919,9 @@ export function renderRadiosGrid() {
           volSlider.onchange = handleVolInput;
         }
         if (volMute) {
+          if (typeof window.bindMuteButtonLongPress === "function") {
+            window.bindMuteButtonLongPress(volMute, () => (card.dataset.hotspotId || hs.id));
+          }
           volMute.onclick = (e) => {
             const currentCid = card.dataset.hotspotId || hs.id;
             handleMuteButtonClick(e, currentCid);
@@ -9604,6 +9641,538 @@ export function appendAllStarTelemetryLog(cid, rtt, jitter) {
   return;
 }
 
+// =========================================================================
+// ALLSTARLINK IN-CARD 5x5 NODE DASHBOARD MATRIX CONTROLLER
+// =========================================================================
+
+let _aslDashFastPollTimer = null;
+
+export function isAslDashAutoOpenEnabled(cid = "default") {
+  try {
+    const val = localStorage.getItem(`proxdmr_asl_dash_auto_${cid}`);
+    if (val === "0" || val === "false") return false;
+    if (val === "1" || val === "true") return true;
+  } catch (_) {}
+  return true;
+}
+
+export function setAslDashAutoOpenEnabled(cid = "default", enabled = true) {
+  try {
+    localStorage.setItem(`proxdmr_asl_dash_auto_${cid}`, enabled ? "1" : "0");
+  } catch (_) {}
+  const card = document.querySelector(`.radio-container[data-hotspot-id="${cid}"]`);
+  if (card) {
+    const chk = card.querySelector(".chk-asl-dash-auto");
+    if (chk) chk.checked = Boolean(enabled);
+  }
+}
+
+export function syncAslDashPanelHeight() {
+  // No-op kept for backward compatibility (dashboard now lives inside #aslMatrixContainer)
+}
+
+function _getAslHotspotObj(cid = null) {
+  const hsList = (typeof getCurrentHotspots === "function" ? getCurrentHotspots() : (window.currentHotspots || []));
+  if (cid) {
+    const exact = hsList.find(h => String(h.id) === String(cid));
+    if (exact) return exact;
+  }
+  const activeId = window.currentAslDashHotspotId || window.activeHotspotId;
+  if (activeId) {
+    const byActive = hsList.find(h => String(h.id) === String(activeId) && ((h.network_type || "").toLowerCase() === "allstar"));
+    if (byActive) return byActive;
+  }
+  return hsList.find(h => ((h && h.network_type) || "").toLowerCase() === "allstar") || null;
+}
+
+function _cleanAslCallsign(rawCall, nodeNum) {
+  if (!rawCall) return "";
+  const trimmed = String(rawCall).trim();
+  if (!trimmed) return "";
+  const upper = trimmed.toUpperCase();
+  if (upper === `NODE ${nodeNum}` || upper === `NODE #${nodeNum}` || upper.startsWith("NODE ")) {
+    return "";
+  }
+  return trimmed;
+}
+
+function _cleanAslPlaceText(rawText, nodeNum, callsign = "") {
+  if (!rawText) return "";
+  const trimmed = String(rawText).trim();
+  if (!trimmed) return "";
+  const upper = trimmed.toUpperCase();
+  const callUpper = String(callsign || "").trim().toUpperCase();
+  if (
+    upper === `NODE ${nodeNum}` ||
+    upper === `NODE #${nodeNum}` ||
+    upper === `#${nodeNum}` ||
+    upper === String(nodeNum) ||
+    (callUpper && (upper === callUpper || upper === `${callUpper} REPEATER` || upper === `${callUpper} NODE`))
+  ) {
+    return "";
+  }
+  return trimmed;
+}
+
+function _buildAslTileTwoLines(item, dirItem, nodeStr, cleanCall) {
+  const rawName = _cleanAslPlaceText(
+    item?.name || dirItem?.name || dirItem?.label || "",
+    nodeStr,
+    cleanCall
+  );
+  const rawLoc = _cleanAslPlaceText(
+    item?.location || dirItem?.location || item?.city || dirItem?.city || "",
+    nodeStr,
+    cleanCall
+  );
+
+  let line1 = "";
+  let line2 = "";
+
+  if (rawName && rawLoc && rawName.toLowerCase() !== rawLoc.toLowerCase()) {
+    line1 = rawName;
+    line2 = rawLoc;
+  } else {
+    const single = rawLoc || rawName;
+    if (single) {
+      const sepMatch = single.match(/^([^,;/·•]+)[,;/·•]\s*(.+)$/);
+      if (sepMatch && sepMatch[1].trim() && sepMatch[2].trim()) {
+        line1 = sepMatch[1].trim();
+        line2 = sepMatch[2].trim();
+      } else {
+        line1 = single;
+        line2 = "";
+      }
+    } else {
+      line1 = cleanCall ? `#${nodeStr}` : `Node ${nodeStr}`;
+      line2 = "";
+    }
+  }
+  return { line1, line2 };
+}
+
+function _mergeAslHubNodesList(aslHs, incomingHubNodes, incomingLinks) {
+  const links = Array.isArray(incomingLinks) ? incomingLinks : (Array.isArray(aslHs.asl_links) ? aslHs.asl_links : []);
+  if (links.length === 0 && !aslHs.is_asl_linked) {
+    aslHs.asl_hub_nodes = [];
+    return [];
+  }
+  const incoming = Array.isArray(incomingHubNodes) && incomingHubNodes.length > 0 ? incomingHubNodes : links;
+  const prev = Array.isArray(aslHs.asl_hub_nodes) ? aslHs.asl_hub_nodes : [];
+  const primaryHubNow = String((links[0] && links[0].node) || aslHs.connected_node || "").trim();
+  const primaryHubPrev = String(aslHs._aslDashCurrentHub || "").trim();
+
+  if (incoming.length <= 1 && prev.length > 1 && primaryHubNow && (!primaryHubPrev || primaryHubPrev === primaryHubNow)) {
+    const kSet = new Set((Array.isArray(aslHs._aslKeyedNodes) ? aslHs._aslKeyedNodes : []).map(String));
+    incoming.forEach(x => { if (x && x.keyed && x.node) kSet.add(String(x.node).trim()); });
+    aslHs.asl_hub_nodes = prev.map(oldItem => ({
+      ...oldItem,
+      keyed: kSet.has(String(oldItem.node || "").trim()),
+    }));
+    return aslHs.asl_hub_nodes;
+  }
+
+  aslHs.asl_hub_nodes = incoming;
+  return incoming;
+}
+
+export function renderAslNodeDashboard(cid = null) {
+  const aslHs = _getAslHotspotObj(cid);
+  if (!aslHs) return;
+  const effCid = aslHs.id || cid || "default";
+
+  const card = document.querySelector(`.radio-container[data-hotspot-id="${effCid}"]`);
+  if (!card) return;
+
+  const matrixContainer = card.querySelector(".asl-matrix-container");
+  const sliderContainer = card.querySelector(".asl-slider-container");
+  const dashViewport = card.querySelector(`#aslDashGridViewport_${effCid}`) || card.querySelector(".asl-dash-grid-viewport");
+  const notchDashBadge = card.querySelector(`#aslNotchDashBadge_${effCid}`) || card.querySelector(".asl-notch-dash-badge");
+  const dashPair = card.querySelector(".control-pair-btn.allstar-dash-pair");
+
+  const isDashOpen = Boolean(aslHs._aslDashMatrixOpen);
+  if (matrixContainer) matrixContainer.classList.toggle("is-dash-view", isDashOpen);
+  if (sliderContainer) sliderContainer.classList.toggle("is-dash-mode", isDashOpen);
+  if (dashPair) dashPair.classList.toggle("dash-open", isDashOpen);
+
+  if (!isDashOpen || !dashViewport) return;
+
+  const links = Array.isArray(aslHs.asl_links) ? aslHs.asl_links : [];
+  const rawHubNodes = (Array.isArray(aslHs.asl_hub_nodes) && aslHs.asl_hub_nodes.length > 0)
+    ? aslHs.asl_hub_nodes
+    : links;
+  const primaryHub = aslHs.asl_hub_info
+    || links[0]
+    || (aslHs.connected_node ? { node: String(aslHs.connected_node) } : null);
+
+  const isLinked = Boolean(primaryHub && primaryHub.node && String(primaryHub.node) !== "0");
+  const hubNodeNum = isLinked ? String(primaryHub.node).trim() : "";
+
+  // Reset heard queue and known participant roster ONLY if primary hub changed or disconnected
+  if (aslHs._aslDashCurrentHub !== hubNodeNum) {
+    aslHs._aslDashCurrentHub = hubNodeNum;
+    aslHs._aslDashHeardOrder = [];
+    aslHs._aslDashHeardSet = new Set();
+    aslHs._aslDashKnownMap = new Map();
+    aslHs._aslDashLastTopSpeaker = "";
+  }
+  if (!Array.isArray(aslHs._aslDashHeardOrder)) aslHs._aslDashHeardOrder = [];
+  if (!(aslHs._aslDashHeardSet instanceof Set)) aslHs._aslDashHeardSet = new Set();
+  if (!(aslHs._aslDashKnownMap instanceof Map)) aslHs._aslDashKnownMap = new Map();
+
+  const ownNode = String(aslHs.allstar_node || aslHs.config?.allstar_node || "").trim();
+  const ownCallCfg = String(aslHs.callsign || aslHs.config?.callsign || "").trim().toUpperCase();
+  const pttBtnEl = card.querySelector(".ptt-button");
+  const isUserTxNow = Boolean(
+    aslHs._aslUserTxActive ||
+    (typeof window !== "undefined" && window.isPttPressed && String(window.activeTxHotspotId || window.activeHotspotId || "default") === String(effCid)) ||
+    (pttBtnEl && pttBtnEl.classList.contains("active"))
+  );
+
+  // Determine currently keyed (transmitting) nodes
+  const isRxNow = Boolean(!isUserTxNow && (aslHs._aslCarrierRx || ((Date.now() - (aslHs._aslLastRxAudioMs || 0)) < 1200)));
+  const keyedSet = new Set();
+  if (isUserTxNow && ownNode && ownNode !== "0") {
+    keyedSet.add(ownNode);
+  } else {
+    if (Array.isArray(aslHs._aslKeyedNodes)) {
+      aslHs._aslKeyedNodes.forEach(n => { if (n) keyedSet.add(String(n).trim()); });
+    }
+    if (isRxNow && aslHs._aslRxActiveNode) {
+      keyedSet.add(String(aslHs._aslRxActiveNode).trim());
+    }
+    rawHubNodes.forEach(item => {
+      if (item && item.keyed && item.node) {
+        keyedSet.add(String(item.node).trim());
+      }
+    });
+
+    // If RX audio/carrier is active right now:
+    // 1) If a specific participant node inside the hub is keyed alongside the hub's own repeater ID, highlight ONLY the participant node.
+    // 2) If no sub-participant ID is in keyedSet yet, fallback to highlighting the connected node/hub tile so active RX always blinks green at 0.8 Hz.
+    if (keyedSet.size > 1 && hubNodeNum && keyedSet.has(hubNodeNum)) {
+      keyedSet.delete(hubNodeNum);
+    } else if (isRxNow && keyedSet.size === 0 && hubNodeNum) {
+      keyedSet.add(hubNodeNum);
+    }
+  }
+
+  // Move any currently transmitting operator to the very top-left (index 0), shifting previous speakers right
+  let speakerPromotedToTop = false;
+  keyedSet.forEach(kn => {
+    if (!kn) return;
+    aslHs._aslDashHeardSet.add(kn);
+    if (aslHs._aslDashHeardOrder[0] !== kn) {
+      aslHs._aslDashHeardOrder = [kn, ...aslHs._aslDashHeardOrder.filter(x => x !== kn)];
+      speakerPromotedToTop = true;
+    }
+  });
+
+  if (!isLinked || (rawHubNodes.length === 0 && aslHs._aslDashKnownMap.size === 0)) {
+    if (notchDashBadge) notchDashBadge.textContent = "DASHBOARD 4×5";
+    const emptyMsg = window.t
+      ? window.t("asl.dash_empty_msg", {}, "Подключитесь к узлу или хабу AllStarLink для обзора его участников")
+      : "Подключитесь к узлу или хабу AllStarLink для обзора его участников";
+    dashViewport.innerHTML = `<div class="asl-dash-grid-empty">${safeEscapeHtml(emptyMsg)}</div>`;
+    return;
+  }
+
+  const resolveDirItem = (nStr) => {
+    if (typeof window !== "undefined" && typeof window.findAslDirectoryNode === "function") {
+      return window.findAslDirectoryNode(nStr) || getAslNodeShortInfo(nStr, aslHs, effCid) || {};
+    }
+    return getAslNodeShortInfo(nStr, aslHs, effCid) || {};
+  };
+
+  // Update persistent participant roster for this hub (never drop multi-node roster on a transient 1-node poll)
+  if (rawHubNodes.length > 1 || aslHs._aslDashKnownMap.size === 0) {
+    if (rawHubNodes.length > 1) {
+      // Authoritative multi-node update: keep any heard nodes + all nodes in rawHubNodes
+      const nextMap = new Map();
+      rawHubNodes.forEach(item => {
+        if (!item || !item.node) return;
+        const nStr = String(item.node).trim();
+        if (!nStr || nextMap.has(nStr)) return;
+        const dir = resolveDirItem(nStr);
+        const flag = item.flag || dir.flag || "🌐";
+        const cleanCall = _cleanAslCallsign(item.callsign || dir.callsign || "", nStr);
+        const { line1, line2 } = _buildAslTileTwoLines(item, dir, nStr, cleanCall);
+        const displayName = [line1, line2].filter(Boolean).join(" · ") || cleanCall || `Node ${nStr}`;
+        nextMap.set(nStr, {
+          node: nStr,
+          flag,
+          callsign: cleanCall,
+          line1,
+          line2,
+          name: displayName,
+        });
+      });
+      aslHs._aslDashKnownMap = nextMap;
+    } else {
+      rawHubNodes.forEach(item => {
+        if (!item || !item.node) return;
+        const nStr = String(item.node).trim();
+        if (!nStr || aslHs._aslDashKnownMap.has(nStr)) return;
+        const dir = resolveDirItem(nStr);
+        const flag = item.flag || dir.flag || "🌐";
+        const cleanCall = _cleanAslCallsign(item.callsign || dir.callsign || "", nStr);
+        const { line1, line2 } = _buildAslTileTwoLines(item, dir, nStr, cleanCall);
+        const displayName = [line1, line2].filter(Boolean).join(" · ") || cleanCall || `Node ${nStr}`;
+        aslHs._aslDashKnownMap.set(nStr, {
+          node: nStr,
+          flag,
+          callsign: cleanCall,
+          line1,
+          line2,
+          name: displayName,
+        });
+      });
+    }
+  }
+
+  // Always include the user's own configured node/callsign in the connected hub dashboard
+  if (isLinked && ownNode && ownNode !== "0" && !aslHs._aslDashKnownMap.has(ownNode)) {
+    const dirOwn = resolveDirItem(ownNode);
+    const fallbackOwnCall = (ownCallCfg && ownCallCfg !== "N0CALL" && ownCallCfg !== "---") ? ownCallCfg : "";
+    const cleanOwnCall = _cleanAslCallsign(dirOwn.callsign || fallbackOwnCall, ownNode) || fallbackOwnCall || `#${ownNode}`;
+    const ownSyntheticItem = {
+      callsign: cleanOwnCall,
+      name: dirOwn.name || aslHs.talker_alias || aslHs.name || "",
+      city: dirOwn.city || "",
+      location: dirOwn.location || "",
+    };
+    const { line1: ownLine1, line2: ownLine2 } = _buildAslTileTwoLines(ownSyntheticItem, dirOwn, ownNode, cleanOwnCall);
+    const ownDisplayName = [ownLine1, ownLine2].filter(Boolean).join(" · ") || cleanOwnCall || `Node ${ownNode}`;
+    const ownFlag = dirOwn.flag || (typeof getCountryInfo === "function" ? (getCountryInfo(0, cleanOwnCall)?.flag || "🌐") : "🌐");
+    aslHs._aslDashKnownMap.set(ownNode, {
+      node: ownNode,
+      flag: ownFlag,
+      callsign: cleanOwnCall,
+      line1: ownLine1,
+      line2: ownLine2,
+      name: ownDisplayName,
+      isOwnNode: true,
+    });
+  }
+
+  // Ensure any currently keyed node is present in the roster
+  keyedSet.forEach(kn => {
+    if (kn && !aslHs._aslDashKnownMap.has(kn)) {
+      const dir = resolveDirItem(kn);
+      const cleanCall = _cleanAslCallsign(dir.callsign || "", kn);
+      const { line1, line2 } = _buildAslTileTwoLines({}, dir, kn, cleanCall);
+      const displayName = [line1, line2].filter(Boolean).join(" · ") || cleanCall || `Node ${kn}`;
+      aslHs._aslDashKnownMap.set(kn, {
+        node: kn,
+        flag: dir.flag || "🌐",
+        callsign: cleanCall,
+        line1,
+        line2,
+        name: displayName,
+      });
+    }
+  });
+
+  const participantMap = new Map();
+  aslHs._aslDashKnownMap.forEach((baseInfo, nStr) => {
+    const isKeyed = keyedSet.has(nStr);
+    const isHeard = aslHs._aslDashHeardSet.has(nStr) || isKeyed;
+    participantMap.set(nStr, {
+      ...baseInfo,
+      isKeyed,
+      isHeard,
+    });
+  });
+
+  if (notchDashBadge) {
+    notchDashBadge.textContent = isLinked
+      ? `HUB #${hubNodeNum} · ${participantMap.size} NODES`
+      : "DASHBOARD 4×5";
+  }
+
+  // 1. Heard / Active queue in exact order of recent transmission (index 0 = top-left most recent speaker, shifted right by newer speakers)
+  const heardList = [];
+  const placedNodes = new Set();
+  aslHs._aslDashHeardOrder.forEach(hNode => {
+    const p = participantMap.get(hNode);
+    if (p && !placedNodes.has(hNode)) {
+      heardList.push(p);
+      placedNodes.add(hNode);
+    }
+  });
+
+  // 2. Remaining silent participants sorted strictly in ascending order by numeric ID
+  const silentList = [];
+  participantMap.forEach((p, nStr) => {
+    if (!placedNodes.has(nStr)) {
+      silentList.push(p);
+    }
+  });
+  silentList.sort((a, b) => (parseInt(a.node, 10) || 0) - (parseInt(b.node, 10) || 0));
+
+  const finalTiles = [...heardList, ...silentList];
+
+  dashViewport.innerHTML = finalTiles.map(tile => {
+    const cls = [
+      "btn-allstar-node",
+      "asl-dash-tile",
+      tile.isKeyed ? "asl-dash-tile-talking" : "",
+      tile.isHeard ? "asl-dash-tile-heard" : "",
+    ].filter(Boolean).join(" ");
+
+    const headerTitle = tile.callsign || `#${tile.node}`;
+    const footerHtml = tile.line2
+      ? `<span class="asl-dash-desc-line">${safeEscapeHtml(tile.line1)}</span><span class="asl-dash-desc-line">${safeEscapeHtml(tile.line2)}</span>`
+      : `<span class="asl-dash-desc-line asl-dash-desc-wrap">${safeEscapeHtml(tile.line1)}</span>`;
+
+    const tipParts = [`#${tile.node}`, tile.callsign, tile.line1, tile.line2].filter(Boolean).join(" · ");
+    const addHint = window.t
+      ? window.t("asl.dash_tile_add_tip", { info: tipParts }, `${tipParts} — Клик: добавить в ячейку памяти`)
+      : `${tipParts} — Клик: добавить в ячейку памяти`;
+
+    return `
+      <button type="button" class="${cls}" data-node="${safeEscapeHtml(tile.node)}" data-callsign="${safeEscapeHtml(tile.callsign)}" data-name="${safeEscapeHtml(tile.name)}" data-flag="${safeEscapeHtml(tile.flag)}" title="${safeEscapeHtml(addHint)}">
+        <div class="asl-btn-header">
+          <span class="asl-btn-flag">${tile.flag}</span>
+          <strong class="asl-btn-num">${safeEscapeHtml(headerTitle)}</strong>
+        </div>
+        <div class="asl-btn-footer">
+          ${footerHtml}
+        </div>
+      </button>
+    `;
+  }).join("");
+
+  // Auto-scroll to the top of the 5x5 grid whenever a new/existing speaker moves to the top-left slot
+  const topSpeakerNow = aslHs._aslDashHeardOrder[0] || "";
+  if (speakerPromotedToTop || (topSpeakerNow && topSpeakerNow !== aslHs._aslDashLastTopSpeaker)) {
+    aslHs._aslDashLastTopSpeaker = topSpeakerNow;
+    try {
+      dashViewport.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (_) {
+      dashViewport.scrollTop = 0;
+    }
+  }
+
+  // Click on any participant tile -> Open "Save node to memory cell" modal (same as from Directory)
+  dashViewport.querySelectorAll(".asl-dash-tile").forEach(tileBtn => {
+    tileBtn.onclick = (e) => {
+      e.stopPropagation();
+      const nId = tileBtn.dataset.node || "";
+      if (!nId) return;
+      const itemObj = {
+        node: nId,
+        callsign: tileBtn.dataset.callsign || "",
+        name: tileBtn.dataset.name || tileBtn.dataset.callsign || `Node ${nId}`,
+        flag: tileBtn.dataset.flag || "🌐",
+      };
+      if (typeof window.openAslCellPickerModal === "function") {
+        window.openAslCellPickerModal(itemObj, effCid);
+      }
+    };
+  });
+}
+
+export async function refreshAslNodeDashboardData(cid = null, showSpinner = false) {
+  const aslHs = _getAslHotspotObj(cid);
+  if (!aslHs) return;
+  const effCid = aslHs.id || "default";
+  try {
+    const resp = await fetch(`/api/allstar/connected?hotspot_id=${encodeURIComponent(effCid)}`);
+    const data = await resp.json();
+    if (data && data.status === "ok") {
+      aslHs.asl_links = data.links || [];
+      if (Array.isArray(data.keyed_nodes)) {
+        const incomingKeyed = data.keyed_nodes.map(String);
+        const isRxActiveNow = Boolean(aslHs._aslCarrierRx || ((Date.now() - (aslHs._aslLastRxAudioMs || 0)) < 1200));
+        if (incomingKeyed.length > 0 || !isRxActiveNow) {
+          aslHs._aslKeyedNodes = incomingKeyed;
+        }
+      }
+      _mergeAslHubNodesList(aslHs, data.hub_nodes, data.links);
+      aslHs.asl_hub_info = data.hub_info || null;
+      aslHs.asl_online_count = data.online_count || 0;
+      if (data.rtt > 0) {
+        if (!window.cachedBmPings) window.cachedBmPings = {};
+        window.cachedBmPings[effCid] = Math.round(data.rtt);
+      }
+      if (aslHs._aslDashMatrixOpen) {
+        renderAslNodeDashboard(effCid);
+      }
+    }
+  } catch (_) {}
+}
+
+export function openAslNodeDashboard(cid = "default") {
+  const aslHs = _getAslHotspotObj(cid);
+  if (!aslHs) return;
+  const effCid = aslHs.id || cid || "default";
+
+  aslHs._aslDashMatrixOpen = true;
+  window.isAslDashVisible = true;
+  window.currentAslDashHotspotId = effCid;
+
+  const card = document.querySelector(`.radio-container[data-hotspot-id="${effCid}"]`);
+  if (card) {
+    const vfoAllStar = card.querySelector(".vfo-allstar");
+    if (vfoAllStar && typeof vfoAllStar.setAslTextView === "function") {
+      vfoAllStar.setAslTextView(false);
+    }
+  }
+
+  renderAslNodeDashboard(effCid);
+  refreshAslNodeDashboardData(effCid, false);
+
+  if (_aslDashFastPollTimer) clearInterval(_aslDashFastPollTimer);
+  _aslDashFastPollTimer = setInterval(() => {
+    if (!window.isAslDashVisible || window.isSessionPausedByAnotherDevice) return;
+    const activeHs = _getAslHotspotObj(window.currentAslDashHotspotId || effCid);
+    if (!activeHs || !activeHs._aslDashMatrixOpen) return;
+    refreshAslNodeDashboardData(activeHs.id || effCid, false);
+  }, 4000);
+}
+
+export function closeAslNodeDashboard() {
+  const hsList = (typeof getCurrentHotspots === "function" ? getCurrentHotspots() : (window.currentHotspots || []));
+  hsList.forEach(h => {
+    if (h && h._aslDashMatrixOpen) {
+      h._aslDashMatrixOpen = false;
+    }
+  });
+  window.isAslDashVisible = false;
+
+  if (_aslDashFastPollTimer) {
+    clearInterval(_aslDashFastPollTimer);
+    _aslDashFastPollTimer = null;
+  }
+
+  document.querySelectorAll(".radio-container").forEach(card => {
+    const pair = card.querySelector(".control-pair-btn.allstar-dash-pair");
+    if (pair) pair.classList.remove("dash-open");
+    const matrixContainer = card.querySelector(".asl-matrix-container");
+    if (matrixContainer) matrixContainer.classList.remove("is-dash-view");
+    const sliderContainer = card.querySelector(".asl-slider-container");
+    if (sliderContainer) sliderContainer.classList.remove("is-dash-mode");
+  });
+}
+
+export function toggleAslNodeDashboard(cid = "default") {
+  const aslHs = _getAslHotspotObj(cid);
+  if (!aslHs) return;
+  if (aslHs._aslDashMatrixOpen) {
+    aslHs._aslDashMatrixOpen = false;
+    const anyStillOpen = (typeof getCurrentHotspots === "function" ? getCurrentHotspots() : []).some(h => h && h._aslDashMatrixOpen);
+    window.isAslDashVisible = anyStillOpen;
+    if (!anyStillOpen && _aslDashFastPollTimer) {
+      clearInterval(_aslDashFastPollTimer);
+      _aslDashFastPollTimer = null;
+    }
+    renderAslNodeDashboard(aslHs.id || cid);
+  } else {
+    openAslNodeDashboard(aslHs.id || cid);
+  }
+}
+
 if (typeof window !== "undefined" && !window._aslOnlinePollInterval) {
   window._aslOnlinePollInterval = setInterval(() => {
     if (window.isSessionPausedByAnotherDevice) return;
@@ -9619,7 +10188,15 @@ if (typeof window !== "undefined" && !window._aslOnlinePollInterval) {
             const nodes = data.connected_nodes || [];
             const links = data.links || [];
             aslHs.asl_links = links;
-            const prevCount = aslHs.asl_online_count;
+            if (Array.isArray(data.keyed_nodes)) {
+              const incomingKeyed = data.keyed_nodes.map(String);
+              const isRxActiveNow = Boolean(aslHs._aslCarrierRx || ((Date.now() - (aslHs._aslLastRxAudioMs || 0)) < 1200));
+              if (incomingKeyed.length > 0 || !isRxActiveNow) {
+                aslHs._aslKeyedNodes = incomingKeyed;
+              }
+            }
+            _mergeAslHubNodesList(aslHs, data.hub_nodes, links);
+            aslHs.asl_hub_info = data.hub_info || null;
             const newCount = data.online_count || links.filter(l => !l.connecting).length || nodes.length;
             aslHs.asl_online_count = newCount;
             if (nodes.length > 0 && nodes[0] !== aslHs.connected_node) {
@@ -9655,6 +10232,9 @@ if (typeof window !== "undefined" && !window._aslOnlinePollInterval) {
                 syncAslMatrixButtonsState(card, aslHs);
               }
             }
+            if (aslHs._aslDashMatrixOpen) {
+              renderAslNodeDashboard(cid);
+            }
           }
         })
         .catch(() => {});
@@ -9662,7 +10242,25 @@ if (typeof window !== "undefined" && !window._aslOnlinePollInterval) {
   }, 10000);
 }
 
-if (typeof window !== 'undefined') { window.updateCardXlxPanel = updateCardXlxPanel; window.updateCardDmrPlusPanel = updateCardDmrPlusPanel; window.linkHotspotDmrPlusReflector = linkHotspotDmrPlusReflector; window.updateCardAllStarPanel = updateCardAllStarPanel; window.updateAslVfoHeader = updateAslVfoHeader; window.getAslNodeShortInfo = getAslNodeShortInfo; window.appendAllStarLogEntry = appendAllStarLogEntry; window.appendAllStarTelemetryLog = appendAllStarTelemetryLog; window.openAllStarDtmfPopover = openAllStarDtmfPopover; }
+if (typeof window !== 'undefined') {
+  window.updateCardXlxPanel = updateCardXlxPanel;
+  window.updateCardDmrPlusPanel = updateCardDmrPlusPanel;
+  window.linkHotspotDmrPlusReflector = linkHotspotDmrPlusReflector;
+  window.updateCardAllStarPanel = updateCardAllStarPanel;
+  window.updateAslVfoHeader = updateAslVfoHeader;
+  window.getAslNodeShortInfo = getAslNodeShortInfo;
+  window.appendAllStarLogEntry = appendAllStarLogEntry;
+  window.appendAllStarTelemetryLog = appendAllStarTelemetryLog;
+  window.openAllStarDtmfPopover = openAllStarDtmfPopover;
+  window.openAslNodeDashboard = openAslNodeDashboard;
+  window.closeAslNodeDashboard = closeAslNodeDashboard;
+  window.toggleAslNodeDashboard = toggleAslNodeDashboard;
+  window.renderAslNodeDashboard = renderAslNodeDashboard;
+  window.refreshAslNodeDashboardData = refreshAslNodeDashboardData;
+  window.isAslDashAutoOpenEnabled = isAslDashAutoOpenEnabled;
+  window.setAslDashAutoOpenEnabled = setAslDashAutoOpenEnabled;
+  window.syncAslDashPanelHeight = syncAslDashPanelHeight;
+}
 
 
 export function updateHsFormAliveState(isAlive) {

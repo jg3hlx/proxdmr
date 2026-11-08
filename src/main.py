@@ -109,6 +109,7 @@ ws_audio_queues: Dict[WebSocket, asyncio.Queue] = {}
 ws_audio_tasks: Dict[WebSocket, asyncio.Task] = {}
 ws_client_instance_map: Dict[WebSocket, str] = {}   # ws -> client_instance_id (cid)
 active_user_client_cid: Dict[int, str] = {}         # user_id -> active non-demo cid
+active_parrot_sessions: Dict[str, dict] = {}        # client_id -> parrot test session state
 
 def _prune_dead_ws_clients() -> None:
     dead = {
@@ -267,6 +268,10 @@ def dispatch_user_audio(user_id: int, data: bytes, exclude: Optional[WebSocket] 
         return
     for ws in list(sockets):
         if ws == exclude:
+            continue
+        cid = ws_client_instance_map.get(ws)
+        if cid and cid in active_parrot_sessions:
+            # Во время попугай-теста изолируем клиента от постороннего звука радиоэфира
             continue
         q = ws_audio_queues.get(ws)
         if q is not None:
@@ -485,6 +490,23 @@ async def lifespan(app: FastAPI):
         logger.warning(f"[MAIN] Error initializing user 1 recordings settings: {e}")
     await hotspot_manager.start()
     bm_ping_service.start()
+
+    async def _auto_initial_bm_benchmark():
+        try:
+            await asyncio.sleep(3.0)
+            existing = bm_ping_service.get_benchmark_results()
+            if not existing:
+                logger.info("[MAIN] No primary BM ping table found. Running silent startup BM benchmark...")
+                masters_data = await get_bm_masters()
+                servers = masters_data.get("masters", [])
+                if servers:
+                    await bm_ping_service.start_benchmark(servers, silent=True)
+            else:
+                logger.info(f"[MAIN] Loaded primary BM ping table ({len(existing)} servers cached).")
+        except Exception as e:
+            logger.warning(f"[MAIN] Silent startup BM benchmark failed: {e}")
+
+    asyncio.create_task(_auto_initial_bm_benchmark())
     memguard.start(BASE_DIR / "data")
     await visitor_stats.init()
     stats_task = asyncio.create_task(visitor_stats.reporter_loop())
@@ -2387,7 +2409,8 @@ async def get_index(request: Request):
             "qrz_com_password": qrz_com_password,
             "hamqth_username": hamqth_username,
             "hamqth_password": hamqth_password,
-            "disable_update_notifications": disable_update_notifications,
+            "disable_update_notifications": True if (user and user.get("is_demo")) else disable_update_notifications,
+            "is_demo": bool(user and user.get("is_demo")),
             "app_version": APP_VERSION,
             "app_version_date": APP_VERSION_DATE,
             "apk_version": get_current_apk_metadata()["apk_version"],
@@ -4751,16 +4774,24 @@ async def _execute_asl_connect_flow(
 
         # Шаг Б: Подключение нового ХН (Connect Next)
         logger.info(f"[ASL-FLOW] Connecting to #{node} (mode {mode_clean}) on {own_node}")
-        res = await asyncio.to_thread(
-            asl_container_mgr.run_connect_procedure,
-            user_id=str(uid),
-            node_number=own_node,
-            target_node=node,
-            mode=mode_clean,
-            show_status_banner=show_status_banner,
-            show_card_effects=show_card_effects,
-            step_cb=emit_step
-        )
+        target_hs._connecting_asl_node = node
+        target_hs._last_asl_node = node
+        asl_pre = getattr(target_hs, "allstar_client", None)
+        if asl_pre:
+            asl_pre._last_asl_node = node
+        try:
+            res = await asyncio.to_thread(
+                asl_container_mgr.run_connect_procedure,
+                user_id=str(uid),
+                node_number=own_node,
+                target_node=node,
+                mode=mode_clean,
+                show_status_banner=show_status_banner,
+                show_card_effects=show_card_effects,
+                step_cb=emit_step
+            )
+        finally:
+            target_hs._connecting_asl_node = ""
 
         # Шаг В: Финализация состояния target_hs строго по факту res["success"]
         if res.get("success"):
@@ -4773,8 +4804,8 @@ async def _execute_asl_connect_flow(
             target_hs.detail = f"AllStarLink Node {node}"
 
             asl = getattr(target_hs, "allstar_client", None)
-            if asl and asl.is_connected:
-                asl.send_dtmf(f"{mode_clean}{node}")
+            if asl:
+                asl._last_asl_node = node
 
             await broadcast_user_json(uid, {
                 "type": "bm_status",
@@ -4857,39 +4888,41 @@ async def api_allstar_connected(hotspot_id: str = "default", request: Request = 
     """Returns list of remote nodes currently connected to this AllStar node with telemetry."""
     user = _get_user_from_request(request) if request else None
     if user and user.get("is_demo"):
-        return {"status": "ok", "connected_nodes": [], "online_count": 0, "rtt": 0, "jitter": 0}
+        return {"status": "ok", "connected_nodes": [], "links": [], "hub_nodes": [], "hub_info": None, "keyed_nodes": [], "online_count": 0, "rtt": 0, "jitter": 0}
     uid = user["user_id"] if user else (hotspot_manager.active_user_id or 1)
     target_hs = (hotspot_manager.get_runtime(uid, hotspot_id) if hotspot_id else None) or hotspot_manager.get_active_runtime(uid)
     if not target_hs:
-        return {"status": "ok", "connected_nodes": [], "online_count": 0, "rtt": 0, "jitter": 0}
+        return {"status": "ok", "connected_nodes": [], "links": [], "hub_nodes": [], "hub_info": None, "keyed_nodes": [], "online_count": 0, "rtt": 0, "jitter": 0}
     own_node = str(getattr(target_hs.config, "allstar_node", "1999") or "1999").strip()
     links = []
+    hub_nodes = []
+    hub_info = None
+    keyed_nodes = []
     established_nodes = []
     nodes = []
     try:
         from asl_container_manager import asl_container_mgr
-        from allstar_directory import allstar_dir_mgr
-        links = asl_container_mgr.get_connected_links(user_id=str(uid), node_number=own_node)
-        for lk in (links or []):
-            if isinstance(lk, dict) and lk.get("node"):
-                info = allstar_dir_mgr.get_node_info(str(lk["node"]).strip())
-                if info:
-                    if not lk.get("callsign"):
-                        lk["callsign"] = info.get("callsign", "")
-                    if not lk.get("name"):
-                        lk["name"] = info.get("name", "")
-                    if not lk.get("city"):
-                        lk["city"] = info.get("city", "")
-                    if not lk.get("flag"):
-                        lk["flag"] = info.get("flag", "🌐")
+        topo = await asyncio.to_thread(asl_container_mgr.get_hub_topology, str(uid), own_node)
+        links = topo.get("links") or []
+        hub_nodes = topo.get("hub_nodes") or []
+        hub_info = topo.get("hub_info")
+        keyed_nodes = list(topo.get("keyed_nodes") or [])
         established_nodes = [l["node"] for l in links if isinstance(l, dict) and "node" in l and not l.get("connecting")] if links else []
-        nodes = [l["node"] for l in links if isinstance(l, dict) and "node" in l] if links else asl_container_mgr.get_connected_nodes(user_id=str(uid), node_number=own_node)
+        nodes = [l["node"] for l in links if isinstance(l, dict) and "node" in l]
     except Exception as e:
         logger.warning(f"[ALLSTAR] Error querying links for node {own_node}: {e}")
+
+    prev_hub_nodes = getattr(target_hs, "asl_hub_nodes", None) or []
+    prev_conn_node = str(getattr(target_hs, "connected_node", "") or "").strip()
+    cur_conn_node = str(established_nodes[0]).strip() if established_nodes else ""
+    if cur_conn_node and len(hub_nodes) <= 1 and len(prev_hub_nodes) > 1 and (not prev_conn_node or prev_conn_node == cur_conn_node):
+        k_set = {str(x).strip() for x in (keyed_nodes or [])}
+        hub_nodes = [dict(item, keyed=(str(item.get("node", "")).strip() in k_set)) for item in prev_hub_nodes]
 
     online_count = len(established_nodes)
     target_hs.asl_online_count = online_count
     target_hs.asl_links = links
+    target_hs.asl_hub_nodes = hub_nodes if established_nodes else []
 
     asl_client = getattr(target_hs, "allstar_client", None)
     is_client_connected = bool(asl_client and asl_client.is_connected)
@@ -4934,22 +4967,31 @@ async def api_allstar_connected(hotspot_id: str = "default", request: Request = 
         target_node = links[0].get("node")
 
     if target_node:
-        try:
-            from asl_container_manager import asl_container_mgr
-            netstats = asl_container_mgr.get_node_netstats(str(uid), own_node)
-            node_stat = netstats.get(str(target_node))
-            if node_stat and node_stat.get("rtt"):
-                rtt = float(node_stat["rtt"])
-                jitter = float(node_stat.get("jitter", 0.0))
-            else:
-                target_ip = (node_stat.get("ip") if node_stat else None) or asl_container_mgr.lookup_node_ip(str(uid), own_node, str(target_node))
-                if target_ip:
-                    from ping import measure_host_ping_and_loss
-                    p_rtt, _ = measure_host_ping_and_loss(target_ip, 2, 0.4)
-                    if p_rtt:
-                        rtt = float(p_rtt)
-        except Exception:
-            pass
+        def _resolve_node_rtt_sync(u_str: str, own_n: str, tgt_n: str, is_rx_now: bool):
+            loc_rtt = 0.0
+            loc_jit = 0.0
+            try:
+                from asl_container_manager import asl_container_mgr
+                netstats = asl_container_mgr.get_node_netstats(u_str, own_n)
+                node_stat = netstats.get(str(tgt_n))
+                if node_stat and node_stat.get("rtt"):
+                    loc_rtt = float(node_stat["rtt"])
+                    loc_jit = float(node_stat.get("jitter", 0.0))
+                elif not is_rx_now:
+                    target_ip = (node_stat.get("ip") if node_stat else None) or asl_container_mgr.lookup_node_ip(u_str, own_n, str(tgt_n))
+                    if target_ip:
+                        from ping import measure_host_ping_and_loss
+                        p_rtt, _ = measure_host_ping_and_loss(target_ip, 1, 0.25)
+                        if p_rtt:
+                            loc_rtt = float(p_rtt)
+            except Exception:
+                pass
+            return loc_rtt, loc_jit
+
+        is_rx_active = bool(asl_client and getattr(asl_client, "is_rx", False))
+        rtt, jitter = await asyncio.to_thread(
+            _resolve_node_rtt_sync, str(uid), own_node, str(target_node), is_rx_active
+        )
 
     if rtt == 0.0 and hasattr(bm_ping_service, "cached_pings"):
         cached = bm_ping_service.cached_pings.get(target_hs.config.id)
@@ -4964,11 +5006,19 @@ async def api_allstar_connected(hotspot_id: str = "default", request: Request = 
             rtt = getattr(target_hs.allstar_client, "current_rtt_ms", 0.0)
             jitter = getattr(target_hs.allstar_client, "current_jitter_ms", 0.0)
 
+    active_rx_node = str(getattr(target_hs, "_active_asl_node", "") or "").strip()
+    if active_rx_node and active_rx_node not in keyed_nodes:
+        keyed_nodes.insert(0, active_rx_node)
+
     return {
         "status": "ok",
         "own_node": own_node,
         "connected_nodes": nodes,
         "links": links,
+        "hub_nodes": hub_nodes,
+        "hub_info": hub_info,
+        "keyed_nodes": keyed_nodes,
+        "active_node": active_rx_node or (keyed_nodes[0] if keyed_nodes else ""),
         "online_count": online_count,
         "rtt": rtt,
         "jitter": jitter,
@@ -6943,6 +6993,22 @@ async def check_update_endpoint(request: Request, force: bool = False):
         "Pragma": "no-cache",
         "Expires": "0",
     }
+    if user.get("is_demo"):
+        return JSONResponse(
+            content={
+                "status": "ok",
+                "has_update": False,
+                "current_version": APP_VERSION,
+                "current_date": APP_VERSION_DATE,
+                "latest_version": APP_VERSION,
+                "release_date": APP_VERSION_DATE,
+                "disable_update_notifications": True,
+                "is_admin": False,
+                "is_demo": True,
+                "release_notes": {},
+            },
+            headers=nocache_headers,
+        )
     try:
         data = await asyncio.to_thread(check_for_updates, force=force)
         sett = hotspot_manager.user_settings.get(1) or hotspot_manager.settings
@@ -7771,6 +7837,163 @@ async def api_toggle_recording_session(payload: dict = None, request: Request = 
         return {"status": "ok", "action": "stopped", "saved": saved}
 
 
+# =========================================================================
+# LOCAL PARROT TEST ENGINE (DMR AMBE+2 / ASL G.711)
+# =========================================================================
+
+def _process_dmr_parrot_audio(pcm_data: bytes, target_hs: Any = None) -> bytes:
+    """Encodes PCM to AMBE+2 frames and decodes back via mbelib-neo with boundary crossfade."""
+    if not pcm_data:
+        return pcm_data
+
+    # Пропускаем через ServerTxDsp покадрово по 60 мс (960 байт) для точной работы эквалайзера, HPF и АРУ
+    tx_dsp = getattr(target_hs, "tx_dsp", None)
+    if tx_dsp is not None:
+        try:
+            tx_dsp.reset()
+            dsp_out = bytearray()
+            chunk_bytes = 960
+            for off in range(0, len(pcm_data), chunk_bytes):
+                dsp_out.extend(tx_dsp.process_burst(pcm_data[off:off + chunk_bytes]))
+            pcm_data = bytes(dsp_out)
+            tx_dsp.reset()
+        except Exception as e:
+            logger.warning(f"[PARROT] TX DSP processing error in DMR parrot: {e}")
+
+    enc = None
+    dec = None
+    try:
+        import ctypes
+        from dmr.vocoder_encoder import DMRVocoderEncoder
+        from dmr.vocoder import DMRVocoderDecoder
+        enc = DMRVocoderEncoder()
+        dec = DMRVocoderDecoder()
+        if not enc.is_ready or not dec.is_ready:
+            return pcm_data
+
+        out_pcm = bytearray()
+        chunk_bytes = 960  # 60ms @ 8000 Hz 16-bit mono = 480 samples = 960 bytes
+        offset = 0
+
+        while offset < len(pcm_data):
+            part = pcm_data[offset:offset + chunk_bytes]
+            offset += chunk_bytes
+            if len(part) < chunk_bytes:
+                part = part + b"\x00" * (chunk_bytes - len(part))
+
+            frames = enc.encode_60ms_superframe(part)
+            if frames and len(frames) == 3:
+                for raw9 in frames:
+                    c_buf = (ctypes.c_uint8 * 9).from_buffer_copy(raw9)
+                    dec.lib.mbe_neo_decode_72(
+                        dec._slots[1],
+                        c_buf,
+                        dec._out160,
+                        ctypes.byref(dec._meta_c)
+                    )
+                    out_pcm.extend(bytes(dec._out160))
+            else:
+                out_pcm.extend(part)
+
+        res_bytes = bytes(out_pcm) if out_pcm else pcm_data
+        logger.info(f"[PARROT_DMR] Vocoder roundtrip completed: {len(pcm_data)}B input -> AMBE+2 encode/decode -> {len(res_bytes)}B output")
+        return res_bytes
+    except Exception as e:
+        logger.warning(f"[PARROT_DMR] Vocoder roundtrip error, fallback to raw PCM: {e}")
+        return pcm_data
+    finally:
+        if enc is not None:
+            enc.close()
+        if dec is not None:
+            dec.close()
+
+
+def _process_analog_parrot_audio(pcm_data: bytes, target_hs: Any = None) -> bytes:
+    """Encodes PCM to G.711 u-law and decodes back to simulate analog ASL/IAX2 channel."""
+    if not pcm_data:
+        return pcm_data
+
+    # Пропускаем через ServerTxDsp покадрово по 60 мс (960 байт) для точной работы эквалайзера, HPF и АРУ
+    tx_dsp = getattr(target_hs, "tx_dsp", None)
+    if tx_dsp is not None:
+        try:
+            tx_dsp.reset()
+            dsp_out = bytearray()
+            chunk_bytes = 960
+            for off in range(0, len(pcm_data), chunk_bytes):
+                dsp_out.extend(tx_dsp.process_burst(pcm_data[off:off + chunk_bytes]))
+            pcm_data = bytes(dsp_out)
+            tx_dsp.reset()
+        except Exception as e:
+            logger.warning(f"[PARROT] TX DSP processing error in Analog parrot: {e}")
+
+    try:
+        from allstar_engine import pcm16_to_ulaw, ulaw_to_pcm16
+        ulaw = pcm16_to_ulaw(pcm_data)
+        res = ulaw_to_pcm16(ulaw)
+        logger.info(f"[PARROT_ANALOG] Analog roundtrip completed: {len(pcm_data)}B PCM -> {len(ulaw)}B G.711 u-law -> {len(res)}B PCM")
+        return res
+    except Exception as e:
+        logger.warning(f"[PARROT_ANALOG] Analog roundtrip error: {e}")
+        return pcm_data
+
+
+async def _run_parrot_playback(websocket, client_id: str, pcm_data: bytes, network: str, user_id: int = 1, hid: str = None):
+    """Streams decoded audio frames back to the client as local parrot test."""
+    try:
+        await asyncio.sleep(0.40)  # Natural turnaround pause
+        if not pcm_data or len(pcm_data) < 320:
+            await websocket.send_text(json.dumps({"type": "parrot_test_done"}))
+            return
+
+        await websocket.send_text(json.dumps({
+            "type": "parrot_playback_start",
+            "network": network,
+            "total_bytes": len(pcm_data)
+        }))
+
+        target_hs = (hotspot_manager.get_runtime(user_id, hid) if hid else None) or hotspot_manager.get_active_runtime(user_id)
+
+        if network == "dmr":
+            processed = _process_dmr_parrot_audio(pcm_data, target_hs)
+        else:
+            processed = _process_analog_parrot_audio(pcm_data, target_hs)
+
+        chunk_size = 960  # 60ms chunks
+        offset = 0
+        total = len(processed)
+        next_chunk_time = time.monotonic()
+
+        while offset < total:
+            chunk = processed[offset:offset + chunk_size]
+            offset += chunk_size
+            b64_pcm = base64.b64encode(chunk).decode("ascii")
+            await websocket.send_text(json.dumps({
+                "type": "parrot_audio_chunk",
+                "pcm": b64_pcm,
+                "network": network
+            }))
+            next_chunk_time += 0.060
+            sleep_sec = next_chunk_time - time.monotonic()
+            if sleep_sec > 0:
+                await asyncio.sleep(sleep_sec)
+            else:
+                next_chunk_time = time.monotonic()
+
+        await asyncio.sleep(0.15)
+        await websocket.send_text(json.dumps({"type": "parrot_test_done"}))
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning(f"[PARROT] Playback error: {e}")
+        try:
+            await websocket.send_text(json.dumps({"type": "parrot_test_done"}))
+        except Exception:
+            pass
+    finally:
+        active_parrot_sessions.pop(client_id, None)
+
+
 # --- WebSocket Radio Endpoint ---
 
 @app.websocket("/ws/radio")
@@ -8125,6 +8348,36 @@ async def websocket_radio_endpoint(websocket: WebSocket):
                     continue
 
                 msg_type = data.get("type")
+
+                if msg_type == "parrot_test_start":
+                    active_parrot_sessions[client_id] = {
+                        "recording": True,
+                        "buffer": bytearray(),
+                        "network": data.get("network", "dmr"),
+                        "hotspot_id": data.get("hotspot_id"),
+                        "user_id": ws_user_id,
+                        "task": None
+                    }
+                    await websocket.send_text(json.dumps({
+                        "type": "parrot_test_ready",
+                        "network": data.get("network", "dmr")
+                    }))
+                    continue
+                elif msg_type == "parrot_test_stop":
+                    sess = active_parrot_sessions.get(client_id)
+                    if sess and sess.get("recording"):
+                        sess["recording"] = False
+                        pcm_bytes = bytes(sess["buffer"])
+                        net = sess.get("network", "dmr")
+                        uid = sess.get("user_id", ws_user_id)
+                        hid = sess.get("hotspot_id")
+                        sess["task"] = asyncio.create_task(_run_parrot_playback(websocket, client_id, pcm_bytes, net, uid, hid))
+                    continue
+                elif msg_type == "parrot_test_cancel":
+                    sess = active_parrot_sessions.pop(client_id, None)
+                    if sess and sess.get("task") and not sess["task"].done():
+                        sess["task"].cancel()
+                    continue
 
                 if msg_type == "ptt_press":
                     if await is_user_swl(ws_user_id):
@@ -8527,43 +8780,32 @@ async def websocket_radio_endpoint(websocket: WebSocket):
                             "all_quick_mem": user_settings.quick_mem
                         }, exclude=websocket)
 
+
                 elif msg_type == "set_vocoder_settings":
-                    uvq = min(8, max(1, int(data.get("uvquality", 3))))
                     enh = bool(data.get("spectral_enh", True))
-                    flt = bool(data.get("float_mode", True))
-                    reps = int(data.get("max_repeats", 3))
-                    decay = float(data.get("repeat_decay", 0.75))
-                    fec = int(data.get("fec_tolerance", 1))
-                    gain = min(8.0, max(1.0, float(data.get("audio_gain", 7.0))))
+                    high_band_gain_db = max(0.0, min(6.0, float(data.get("high_band_gain_db", 2.5))))
+                    unvoiced_gain_db = max(-4.0, min(4.0, float(data.get("unvoiced_gain_db", -0.4))))
                     user_rts = hotspot_manager.get_user_runtimes(ws_user_id)
                     for rt in user_rts.values():
                         if hasattr(rt, "vocoder") and hasattr(rt.vocoder, "set_settings"):
                             rt.vocoder.set_settings(
-                                uvquality=uvq,
                                 spectral_enh=enh,
-                                float_mode=flt,
-                                max_repeats=reps,
-                                repeat_decay=decay,
-                                fec_tolerance=fec,
-                                audio_gain=gain
+                                high_band_gain_db=high_band_gain_db,
+                                unvoiced_gain_db=unvoiced_gain_db
                             )
                     if not hasattr(user_settings, "client_settings") or user_settings.client_settings is None:
                         user_settings.client_settings = {}
                     user_settings.client_settings.setdefault("ambe_rx", {}).update({
-                        "uvquality": uvq,
                         "spectral_enh": enh,
-                        "float_mode": flt,
-                        "max_repeats": reps,
-                        "repeat_decay": int(decay * 100) if decay <= 1.0 else int(decay),
-                        "fec_tolerance": fec,
-                        "audio_gain": gain
+                        "high_band_gain_db": high_band_gain_db,
+                        "unvoiced_gain_db": unvoiced_gain_db
                     })
                     await save_user_settings(ws_user_id, user_settings.model_dump())
                     if ws_user_id == 1:
                         save_app_settings(user_settings)
                     logger.info(
-                        f"[VOCODER] Applied & saved DSD-FME settings (user {ws_login}): uvq={uvq}, enh={enh}, flt={flt}, "
-                        f"reps={reps}, decay={decay}, fec={fec}, gain={gain}"
+                        f"[VOCODER] Applied & saved AMBE+2 settings (user {ws_login}): enh={enh}, "
+                        f"high_band={high_band_gain_db} dB, unvoiced={unvoiced_gain_db} dB"
                     )
 
                 elif msg_type == "set_agc_enabled":
@@ -8934,7 +9176,12 @@ async def websocket_radio_endpoint(websocket: WebSocket):
 
             elif "bytes" in message:
                 audio_bytes = message["bytes"]
-                if u_radio_state.is_transmitting and (u_radio_state.transmitting_client_id == client_id or not u_radio_state.transmitting_client_id):
+                parrot_sess = active_parrot_sessions.get(client_id)
+                if parrot_sess and parrot_sess.get("recording"):
+                    parrot_sess["buffer"].extend(audio_bytes)
+                    if len(parrot_sess["buffer"]) > 240000:  # 15 sec safety limit
+                        parrot_sess["recording"] = False
+                elif u_radio_state.is_transmitting and (u_radio_state.transmitting_client_id == client_id or not u_radio_state.transmitting_client_id):
                     hotspot_manager.process_tx_audio(audio_bytes, user_id=ws_user_id)
                 else:
                     last_drop = getattr(u_radio_state, "_last_drop_log", 0.0)
@@ -8951,6 +9198,9 @@ async def websocket_radio_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"[WS] Error on {client_id}: {e}")
     finally:
+        sess = active_parrot_sessions.pop(client_id, None)
+        if sess and sess.get("task") and not sess["task"].done():
+            sess["task"].cancel()
         if demo_timer_task and not demo_timer_task.done():
             demo_timer_task.cancel()
         was_demo = (websocket in demo_ws_clients)

@@ -311,6 +311,68 @@ export function updateCardPttHintForSlot(card, targetSlot = null) {
   const activeHid = getActiveHotspotId();
   const cid = card.dataset.hotspotId || activeHid;
   const netType = getHotspotNetworkType(cid);
+
+  const ts1El = card.querySelector(".ptt-slot-ts1");
+  const ts2El = card.querySelector(".ptt-slot-ts2");
+  const legacyBadge = card.querySelector(".ptt-slot-badge:not(.ptt-slot-ts1):not(.ptt-slot-ts2)");
+  const infoEl = card.querySelector(".ptt-target-info");
+  const descEl = card.querySelector(".ptt-target-desc");
+  const legacyHint = card.querySelector(".ptt-hint");
+
+  // Проверка на режим AllStarLink (ASL)
+  const isAllStar = (netType === "allstar" || card.classList.contains("card-net-allstar") || card.dataset.networkType === "allstar" || (typeof window.isAllStarHotspot === "function" && window.isAllStarHotspot(cid, card)));
+  if (isAllStar) {
+    if (ts1El) ts1El.style.display = "none";
+    if (ts2El) ts2El.style.display = "none";
+    if (legacyBadge) legacyBadge.style.display = "none";
+
+    const hsList = (typeof window !== "undefined" && window.currentHotspots) || (typeof getCurrentHotspots === "function" ? getCurrentHotspots() : []);
+    const hs = hsList.find(h => String(h.id) === String(cid)) || (cid === "default" ? hsList[0] : null);
+    const connNode = String((hs && (hs.connected_node || (Array.isArray(hs.asl_links) && hs.asl_links[0] && hs.asl_links[0].node))) || "").trim();
+    const ownNode = String((hs && (hs.config?.allstar_node || hs.allstar_node || hs.node_number)) || "45113").trim();
+
+    let nodeDesc = "";
+    if (connNode && connNode !== "0") {
+      if (connNode === "1999") {
+        nodeDesc = "Parrot Echo";
+      } else {
+        const directory = (typeof window.getAslDirectoryEntry === "function") ? window.getAslDirectoryEntry(connNode) : null;
+        if (directory && (directory.callsign || directory.info)) {
+          nodeDesc = `${directory.callsign || ""} · ${directory.info || ""}`.trim();
+        } else {
+          nodeDesc = "AllStarLink";
+        }
+      }
+      if (infoEl) {
+        infoEl.textContent = `Node ${connNode}`;
+        infoEl.className = "ptt-target-info is-node";
+      }
+      if (descEl) {
+        descEl.textContent = nodeDesc;
+        descEl.title = nodeDesc;
+        descEl.style.display = "";
+      }
+    } else {
+      if (infoEl) {
+        infoEl.textContent = "AllStarLink";
+        infoEl.className = "ptt-target-info is-node";
+      }
+      if (descEl) {
+        descEl.textContent = `Node ${ownNode}`;
+        descEl.title = `Узел ${ownNode}`;
+        descEl.style.display = "";
+      }
+    }
+    if (legacyHint) {
+      legacyHint.textContent = connNode ? `ASL ➔ Node ${connNode}` : `ASL ➔ Node ${ownNode}`;
+    }
+    return;
+  }
+
+  // Для цифровых режимов (DMR, XLX): восстанавливаем видимость слотов
+  if (ts1El) ts1El.style.display = "";
+  if (ts2El) ts2El.style.display = "";
+
   let effectiveSlot = (targetSlot === 1 || targetSlot === 2) ? targetSlot : (card._activeSlot || getHotspotSlot(cid) || 2);
   if (netType === "xlx") {
     effectiveSlot = 2;
@@ -321,13 +383,6 @@ export function updateCardPttHintForSlot(card, targetSlot = null) {
   if (netType === "xlx" && !isCallerId) {
     curTg = 9;
   }
-
-  const ts1El = card.querySelector(".ptt-slot-ts1");
-  const ts2El = card.querySelector(".ptt-slot-ts2");
-  const legacyBadge = card.querySelector(".ptt-slot-badge:not(.ptt-slot-ts1):not(.ptt-slot-ts2)");
-  const infoEl = card.querySelector(".ptt-target-info");
-  const descEl = card.querySelector(".ptt-target-desc");
-  const legacyHint = card.querySelector(".ptt-hint");
 
   const userCalls = getUserCallsigns();
   const u = userCalls[curTg];

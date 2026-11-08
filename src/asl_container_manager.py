@@ -13,6 +13,7 @@ import logging
 import shutil
 import http.client
 import re
+import threading
 from typing import Dict, Any, Optional, List, Tuple, Callable
 
 logger = logging.getLogger("proxdmr.asl_containers")
@@ -240,7 +241,7 @@ class DockerClient:
         binds: List[str],
         port_bindings: Dict[str, List[Dict[str, str]]],
         memory_bytes: int = 134217728,  # 128 MB
-        nano_cpus: int = 300000000,     # 0.3 CPU
+        nano_cpus: int = 800000000,     # 0.8 CPU
         network_name: Optional[str] = None
     ) -> str:
         exposed_ports = {port: {} for port in port_bindings.keys()}
@@ -266,6 +267,13 @@ class DockerClient:
         if status in (200, 201) and isinstance(data, dict) and "Id" in data:
             return data["Id"]
         raise RuntimeError(f"Failed to create container {name} (status {status}): {data}")
+
+    def update_container_resources(self, name_or_id: str, nano_cpus: int = 800000000) -> bool:
+        try:
+            status, _ = self._request("POST", f"/containers/{name_or_id}/update", body={"NanoCpus": nano_cpus})
+            return status in (200, 204)
+        except Exception:
+            return False
 
     def start_container(self, name_or_id: str) -> bool:
         status, _ = self._request("POST", f"/containers/{name_or_id}/start")
@@ -432,8 +440,8 @@ tailmessagelist =
 tailmessagetime = 0
 tailsquashedlist =
 tailsquashedtime = 0
-idrecording = |i{norm_callsign}
-idtalkover = |i{norm_callsign}
+idrecording =
+idtalkover =
 
 [1999]
 rxchannel = Local/pseudo
@@ -508,6 +516,11 @@ disallow = all
 allow = g726aal2
 allow = gsm
 allow = ulaw
+jitterbuffer = yes
+forcejitterbuffer = yes
+maxjitterbuffer = 300
+resyncthreshold = 1000
+maxjitterinterps = 15
 delayreject = yes
 autokill = 9000
 calltokenoptional = 0.0.0.0/0.0.0.0
@@ -520,6 +533,7 @@ secret = {proxdmr_secret}
 host = dynamic
 disallow = all
 allow = ulaw
+jitterbuffer = no
 transfer = no
 requirecalltoken = no
 
@@ -531,6 +545,7 @@ disallow = all
 allow = ulaw
 allow = slin
 host = 127.0.0.1
+jitterbuffer = no
 transfer = no
 requirecalltoken = no
 """
@@ -580,6 +595,11 @@ class ASLContainerManager:
         self.port_pool = ASLPortPool()
         self._netstats_cache: Dict[str, Tuple[float, Dict[str, Dict[str, Any]]]] = {}
         self._last_known_node_stats: Dict[str, Dict[str, Any]] = {}
+        self._xnode_cache: Dict[str, Tuple[float, str]] = {}
+        self._nodes_fallback_cache: Dict[str, Tuple[float, str]] = {}
+        self._last_full_hub_nodes: Dict[str, Tuple[str, float, List[Dict[str, Any]]]] = {}
+        self._exec_locks: Dict[str, threading.Lock] = {}
+        self._exec_locks_guard = threading.Lock()
 
     def _instance_key(self, user_id: str, node_number: str) -> str:
         clean_user = "".join(c for c in str(user_id) if c.isalnum() or c in ("-", "_"))
@@ -588,6 +608,23 @@ class ASLContainerManager:
 
     def _container_name(self, instance_key: str) -> str:
         return f"asl_{instance_key}"
+
+    def _invalidate_xnode_cache(self, user_id: str, node_number: str) -> None:
+        key = self._instance_key(user_id, node_number)
+        self._xnode_cache.pop(key, None)
+        self._nodes_fallback_cache.pop(key, None)
+        self._last_full_hub_nodes.pop(key, None)
+
+    def _get_xnode_output(self, user_id: str, node_number: str, ttl: float = 1.5) -> str:
+        key = self._instance_key(user_id, node_number)
+        now = time.time()
+        cached = self._xnode_cache.get(key)
+        if cached and (now - cached[0]) < ttl:
+            return cached[1]
+        out = self.execute_asterisk_cmd(user_id, node_number, f"rpt xnode {node_number}")
+        if out:
+            self._xnode_cache[key] = (now, out)
+        return out
 
     def get_instance_status(self, user_id: str, node_number: str) -> Dict[str, Any]:
         key = self._instance_key(user_id, node_number)
@@ -683,6 +720,7 @@ class ASLContainerManager:
         # 3. Проверка существующего контейнера
         existing = self.docker.inspect_container(name)
         if existing:
+            self.docker.update_container_resources(name, nano_cpus=800000000)
             if existing.get("State", {}).get("Running"):
                 logger.info(f"Container {name} is already running. Restarting on server startup/connect to clear stale sessions...")
                 try:
@@ -722,7 +760,7 @@ class ASLContainerManager:
             binds=binds,
             port_bindings=port_bindings,
             memory_bytes=134217728,  # 128 MB RAM max
-            nano_cpus=300000000,      # 0.3 CPU max
+            nano_cpus=800000000,      # 0.8 CPU max
             network_name=network_name
         )
 
@@ -786,13 +824,22 @@ class ASLContainerManager:
     def execute_asterisk_cmd(self, user_id: str, node_number: str, cmd: str) -> str:
         key = self._instance_key(user_id, node_number)
         name = self._container_name(key)
+        if "ilink" in cmd or "hangup" in cmd:
+            self._xnode_cache.pop(key, None)
+            self._nodes_fallback_cache.pop(key, None)
         if not self.docker.is_available():
             return f"Mock response for cmd '{cmd}' on {name}"
-        try:
-            return self.docker.exec_command(name, ["asterisk", "-rx", cmd])
-        except Exception as e:
-            logger.debug(f"execute_asterisk_cmd failed on {name} for '{cmd}': {e}")
-            return ""
+        with self._exec_locks_guard:
+            lock = self._exec_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._exec_locks[key] = lock
+        with lock:
+            try:
+                return self.docker.exec_command(name, ["asterisk", "-rx", cmd])
+            except Exception as e:
+                logger.debug(f"execute_asterisk_cmd failed on {name} for '{cmd}': {e}")
+                return ""
 
     def wait_until_ready(self, user_id: str, node_number: str, timeout: float = 8.0) -> bool:
         """Ожидает полной готовности ядра Asterisk и ноды в app_rpt"""
@@ -1285,7 +1332,7 @@ class ASLContainerManager:
         """
         links = []
         try:
-            output = self.execute_asterisk_cmd(user_id, node_number, f"rpt xnode {node_number}")
+            output = self._get_xnode_output(user_id, node_number, ttl=0.35)
             alinks_line = ""
             for line in output.splitlines():
                 if line.startswith("RPT_ALINKS="):
@@ -1293,13 +1340,13 @@ class ASLContainerManager:
                     break
 
             if alinks_line:
-                # Пример: 3,51010RU,2143RU,N0CALLTU
+                # Пример: 3,51010RU,2143RU,<CALLSIGN>TU
                 parts = alinks_line.split(",")
                 for token in parts[1:]:
                     token = token.strip()
                     if not token:
                         continue
-                    if not re.match(r"^\d+", token):
+                    if any(p in token.upper() for p in ("LOCAL", "WEB", "PSEUDO", "N0CALL")):
                         continue
 
                     import re
@@ -1357,6 +1404,217 @@ class ASLContainerManager:
                 unique.append(l)
         return unique
 
+    def get_hub_topology(self, user_id: str, node_number: str) -> Dict[str, Any]:
+        """
+        Парсит полную топологию подключенного узла/хаба из `rpt xnode <node_number>`:
+        - прямые линки (RPT_ALINKS + таблица времени соединения и IP),
+        - полный список всех узлов в сети хаба (RPT_LINKS),
+        - обогащает каждый узел метаданными из allstar_dir_mgr (callsign, name, city, flag).
+        """
+        import re
+        links: List[Dict[str, Any]] = []
+        hub_nodes: List[Dict[str, Any]] = []
+        keyed_nodes: List[str] = []
+        uptime_map: Dict[str, Dict[str, str]] = {}
+        direct_map: Dict[str, Dict[str, Any]] = {}
+        own_clean = str(node_number or "").strip()
+
+        try:
+            from allstar_directory import allstar_dir_mgr as allstar_dir
+            output = self._get_xnode_output(user_id, own_clean, ttl=1.5)
+            alinks_line = ""
+            links_line = ""
+
+            for raw_line in (output or "").splitlines():
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if line.startswith("RPT_ALINKS="):
+                    alinks_line = line.split("=", 1)[1].strip()
+                elif line.startswith("RPT_LINKS="):
+                    links_line = line.split("=", 1)[1].strip()
+                elif ("ESTABLISHED" in line or "CONNECTING" in line) and not line.startswith("Peer"):
+                    parts = line.split()
+                    if len(parts) >= 6 and parts[0].isdigit() and parts[0] != own_clean:
+                        p_node = parts[0]
+                        uptime_map[p_node] = {
+                            "ip": parts[1] if parts[1] != "(null)" else "",
+                            "direction": parts[3],
+                            "uptime": parts[4],
+                            "state": parts[5],
+                        }
+
+            if alinks_line:
+                parts = alinks_line.split(",")
+                for token in parts[1:]:
+                    token = token.strip()
+                    if not token:
+                        continue
+                    if any(p in token.upper() for p in ("LOCAL", "WEB", "PSEUDO", "N0CALL")):
+                        continue
+                    m = re.match(r"^(\d+)([TRCtrc])?([UKDukd])?$", token)
+                    if m:
+                        node_clean = m.group(1)
+                        if node_clean == own_clean:
+                            continue
+                        mode_char = (m.group(2) or "R").upper()
+                        keyed_char = (m.group(3) or "U").upper()
+                        is_connecting = (mode_char == "C")
+                        mode_flag = "*3" if mode_char == "T" else "*2"
+                        is_keyed = (keyed_char == "K")
+                        up_meta = uptime_map.get(node_clean, {})
+                        direction = up_meta.get("direction") or ("IN" if keyed_char == "D" else "OUT")
+                        uptime_str = up_meta.get("uptime", "")
+                        peer_ip = up_meta.get("ip", "")
+
+                        info = allstar_dir.get_node_info(node_clean) or {}
+                        item = {
+                            "node": node_clean,
+                            "mode": mode_flag,
+                            "link_type": "TRX" if mode_char == "T" else ("CON" if is_connecting else "MON"),
+                            "direction": direction,
+                            "uptime": uptime_str,
+                            "ip": peer_ip,
+                            "flag": info.get("flag") or "🌐",
+                            "callsign": info.get("callsign") or "",
+                            "name": info.get("name") or "",
+                            "location": info.get("location") or "",
+                            "city": info.get("city") or "",
+                            "country": info.get("country") or "",
+                            "clients": 1,
+                            "keyed": is_keyed,
+                            "connecting": is_connecting,
+                            "is_hub": True,
+                            "status": "connecting" if is_connecting else "established",
+                        }
+                        links.append(item)
+                        direct_map[node_clean] = item
+                        if is_keyed and node_clean not in keyed_nodes:
+                            keyed_nodes.append(node_clean)
+
+            seen_hub: set = set()
+            raw_tokens: List[str] = []
+            if links_line:
+                parts = links_line.split(",")
+                raw_tokens.extend(parts[1:])
+
+            # Fallback: if RPT_LINKS in rpt xnode had <= 1 token while linked, also query `rpt nodes <own_clean>` (cached 3.0s)
+            if len(raw_tokens) <= 1 and links:
+                try:
+                    inst_k = self._instance_key(user_id, own_clean)
+                    now_fb = time.time()
+                    cached_fb = self._nodes_fallback_cache.get(inst_k)
+                    if cached_fb and (now_fb - cached_fb[0]) < 3.0:
+                        nodes_out = cached_fb[1]
+                    else:
+                        nodes_out = self.execute_asterisk_cmd(user_id, own_clean, f"rpt nodes {own_clean}")
+                        if nodes_out:
+                            self._nodes_fallback_cache[inst_k] = (now_fb, nodes_out)
+                    for nline in (nodes_out or "").splitlines():
+                        nline_s = nline.strip()
+                        if not nline_s or "CONNECTED NODES" in nline_s.upper() or nline_s.startswith("*"):
+                            continue
+                        for ntok in nline_s.split(","):
+                            ntok_s = ntok.strip()
+                            if ntok_s:
+                                raw_tokens.append(ntok_s)
+                except Exception:
+                    pass
+
+            for token in raw_tokens:
+                token = token.strip()
+                if not token:
+                    continue
+                if any(p in token.upper() for p in ("LOCAL", "WEB", "PSEUDO", "N0CALL")):
+                    continue
+                m1 = re.match(r"^([TRCtrcKkuU]+)?(\d+)([TRCtrcKkuU]+)?$", token)
+                if not m1:
+                    continue
+                prefix_flags = (m1.group(1) or "").upper()
+                node_clean = m1.group(2)
+                suffix_flags = (m1.group(3) or "").upper()
+                if node_clean == own_clean or node_clean in seen_hub:
+                    continue
+                seen_hub.add(node_clean)
+
+                all_flags = prefix_flags + suffix_flags
+                is_keyed = ("K" in all_flags) or bool(direct_map.get(node_clean, {}).get("keyed"))
+                is_connecting = ("C" in all_flags) or bool(direct_map.get(node_clean, {}).get("connecting"))
+                is_trx = ("T" in all_flags) or (direct_map.get(node_clean, {}).get("mode") == "*3")
+
+                if is_keyed and node_clean not in keyed_nodes:
+                    keyed_nodes.append(node_clean)
+
+                d_item = direct_map.get(node_clean)
+                if d_item:
+                    hub_entry = dict(d_item)
+                    hub_entry["keyed"] = is_keyed
+                    hub_entry["is_hub"] = True
+                    hub_nodes.append(hub_entry)
+                else:
+                    info = allstar_dir.get_node_info(node_clean) or {}
+                    up_meta = uptime_map.get(node_clean, {})
+                    hub_nodes.append({
+                        "node": node_clean,
+                        "mode": "*3" if is_trx else "*2",
+                        "link_type": "TRX" if is_trx else ("CON" if is_connecting else "MON"),
+                        "direction": up_meta.get("direction", "HUB"),
+                        "uptime": up_meta.get("uptime", ""),
+                        "ip": up_meta.get("ip", ""),
+                        "flag": info.get("flag") or "🌐",
+                        "callsign": info.get("callsign") or "",
+                        "name": info.get("name") or "",
+                        "location": info.get("location") or "",
+                        "city": info.get("city") or "",
+                        "country": info.get("country") or "",
+                        "keyed": is_keyed,
+                        "connecting": is_connecting,
+                        "is_hub": False,
+                        "status": "connecting" if is_connecting else "established",
+                    })
+
+            for lk in links:
+                n_str = lk["node"]
+                if n_str not in seen_hub:
+                    seen_hub.add(n_str)
+                    hub_nodes.append(dict(lk))
+
+        except Exception as e:
+            logger.warning(f"Error parsing hub topology for node {node_number}: {e}")
+
+        unique_links = []
+        seen_l = set()
+        for l in links:
+            if l["node"] not in seen_l:
+                seen_l.add(l["node"])
+                unique_links.append(l)
+
+        inst_key = self._instance_key(user_id, own_clean)
+        primary_hub_node = unique_links[0]["node"] if unique_links else ""
+        if primary_hub_node:
+            if len(hub_nodes) > 1:
+                self._last_full_hub_nodes[inst_key] = (primary_hub_node, time.time(), [dict(x) for x in hub_nodes])
+            else:
+                cached_full = self._last_full_hub_nodes.get(inst_key)
+                if cached_full and cached_full[0] == primary_hub_node and len(cached_full[2]) > 1:
+                    restored: List[Dict[str, Any]] = []
+                    keyed_set = set(keyed_nodes)
+                    for c_item in cached_full[2]:
+                        c_copy = dict(c_item)
+                        c_copy["keyed"] = (c_copy.get("node") in keyed_set)
+                        restored.append(c_copy)
+                    hub_nodes = restored
+        else:
+            self._last_full_hub_nodes.pop(inst_key, None)
+
+        hub_info = unique_links[0] if unique_links else None
+        return {
+            "links": unique_links,
+            "hub_nodes": hub_nodes,
+            "hub_info": hub_info,
+            "keyed_nodes": keyed_nodes,
+        }
+
     def get_connected_nodes(self, user_id: str, node_number: str) -> List[str]:
         """Парсинг списка подключенных узлов через get_connected_links"""
         try:
@@ -1392,7 +1650,7 @@ class ASLContainerManager:
         key = self._instance_key(user_id, node_number)
         now = time.time()
         cached = self._netstats_cache.get(key)
-        if cached and (now - cached[0]) < 2.0:
+        if cached and (now - cached[0]) < 5.0:
             return cached[1]
 
         res: Dict[str, Dict[str, Any]] = {}

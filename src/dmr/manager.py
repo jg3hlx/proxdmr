@@ -28,6 +28,7 @@ try:
     from dmr.recorder import ServerAudioRecorder, BeepMarkerGenerator
     from dmr.tg_resolver import tg_resolver
     from dmr.constants import parse_freedmr_rpto, build_freedmr_rpto, FREEDMR_MAX_RPTO_BYTES, FREEDMR_DEFAULT_OPTS
+    from dmr.jitter_buffer import DMRRxJitterBuffer
 except ImportError:
     from src.config import AppSettings, HotspotConfig, load_app_settings, save_app_settings, CONFIG_DIR
     from src.dmr.homebrew import BMState, DMRFrame, HomeBrewClient
@@ -42,6 +43,7 @@ except ImportError:
     from src.dmr.recorder import ServerAudioRecorder, BeepMarkerGenerator
     from src.dmr.tg_resolver import tg_resolver
     from src.dmr.constants import parse_freedmr_rpto, build_freedmr_rpto, FREEDMR_MAX_RPTO_BYTES, FREEDMR_DEFAULT_OPTS
+    from src.dmr.jitter_buffer import DMRRxJitterBuffer
 
 CALLS_HISTORY_FILE = CONFIG_DIR / "calls_history.json"
 CALL_HISTORY_RETENTION_SEC = 86400.0  # 24 hours
@@ -120,7 +122,8 @@ class HotspotRuntime:
     dropped_dynamic_ts: Dict[int, float] = field(default_factory=lambda: {1: 0.0, 2: 0.0})
     _recent_burst_keys: Dict[tuple, float] = field(default_factory=dict)
     asl_rx_pcm_accum: bytearray = field(default_factory=bytearray)
-    backend_buffer_ms: int = 0
+    backend_buffer_ms: int = 120
+    rx_jitter_buffers: Dict[int, Any] = field(default_factory=dict)
     _rx_pacer_queues: Dict[int, collections.deque] = field(default_factory=lambda: {1: collections.deque(maxlen=100), 2: collections.deque(maxlen=100)})
     _rx_pacer_tasks: Dict[int, Optional[asyncio.Task]] = field(default_factory=lambda: {1: None, 2: None})
     _rx_pacer_draining: Dict[int, bool] = field(default_factory=lambda: {1: False, 2: False})
@@ -679,29 +682,24 @@ class HotspotManager:
                             high_db=float(arx["eq_high"]) if "eq_high" in arx else None,
                             deemphasis=bool(arx["deemphasis"]) if "deemphasis" in arx else None,
                         )
-        atx = client_settings.get("audio_tx", {})
-        if atx and isinstance(atx, dict):
-            for rt in target_runtimes:
-                if hasattr(rt, "tx_dsp"):
-                    rt.tx_dsp.set_settings(
-                        hpf_enabled=bool(atx["hpf_enabled"]) if "hpf_enabled" in atx else None,
-                        presence_boost=float(atx["presence_boost"]) if "presence_boost" in atx else None,
-                        mic_gain=float(atx["mic_gain"]) if "mic_gain" in atx else None,
-                        dsp_agc=bool(atx["dsp_agc"]) if "dsp_agc" in atx else None,
-                    )
-        vrx = client_settings.get("ambe_rx", {})
-        if vrx and isinstance(vrx, dict):
-            for rt in target_runtimes:
-                if hasattr(rt, "vocoder") and hasattr(rt.vocoder, "set_settings"):
-                    rt.vocoder.set_settings(
-                        uvquality=min(8, max(1, int(vrx.get("uvquality", 3)))),
-                        spectral_enh=bool(vrx.get("spectral_enh", True)),
-                        float_mode=bool(vrx.get("float_mode", True)),
-                        max_repeats=int(vrx.get("max_repeats", 3)),
-                        repeat_decay=float(vrx.get("repeat_decay", 75)) / 100.0,
-                        fec_tolerance=int(vrx.get("fec_tolerance", 1)),
-                        audio_gain=min(8.0, max(1.0, float(vrx.get("audio_gain", 7.0))))
-                    )
+        atx_dmr = client_settings.get("audio_tx", {})
+        atx_asl = client_settings.get("asl_audio_tx", {})
+        for rt in target_runtimes:
+            is_asl = (getattr(rt.config, "network_type", "bm") or "").lower() == "allstar" or bool(getattr(rt, "allstar_client", None))
+            atx = atx_asl if (is_asl and atx_asl) else atx_dmr
+            if atx and isinstance(atx, dict) and hasattr(rt, "tx_dsp"):
+                rt.tx_dsp.set_settings(
+                    hpf_enabled=bool(atx["hpf_enabled"]) if "hpf_enabled" in atx else None,
+                    presence_boost=float(atx["presence_boost"]) if "presence_boost" in atx else None,
+                    eq_low=float(atx["eq_low"]) if "eq_low" in atx else None,
+                    eq_mid=float(atx["eq_mid"]) if "eq_mid" in atx else None,
+                    eq_high=float(atx["eq_high"]) if "eq_high" in atx else None,
+                    mic_gain=float(atx["mic_gain"]) if "mic_gain" in atx else None,
+                    dsp_agc=bool(atx["dsp_agc"]) if "dsp_agc" in atx else None,
+                )
+        ambe_rx = client_settings.get("ambe_rx", {})
+        if ambe_rx and isinstance(ambe_rx, dict):
+            self.set_vocoder_settings(user_id=user_id, **ambe_rx)
         if hasattr(self, "recorder") and self.recorder:
             self.recorder.apply_settings(client_settings)
 
@@ -718,6 +716,16 @@ class HotspotManager:
             if rt.client:
                 try:
                     await rt.client.disconnect()
+                except Exception:
+                    pass
+            if getattr(rt, "vocoder", None):
+                try:
+                    rt.vocoder.close()
+                except Exception:
+                    pass
+            if getattr(rt, "tx_encoder", None):
+                try:
+                    rt.tx_encoder.close()
                 except Exception:
                     pass
         self.user_active_calls.pop(user_id, None)
@@ -788,11 +796,16 @@ class HotspotManager:
             # Extract spoken personal callsign for AllStarLink calls (e.g. from repeater WW7PSR, operator says <call>K7ABC</call>)
             if target_call.network_type == "allstar" and clean_text:
                 import re
-                m_call = re.search(r'<call>([A-Za-z0-9/]{3,10})</call>', clean_text)
+                m_call = re.search(
+                    r'<call>((?:[A-Za-z0-9]{1,3}/)?(?:[A-Za-z]{1,2}\d{1,4}[A-Za-z]{1,4}|\d[A-Za-z]{1,2}\d{1,4}[A-Za-z]{1,4})(?:/[A-Za-z0-9]{1,4})?)</call>',
+                    clean_text,
+                )
                 if m_call:
-                    spoken_cs = m_call.group(1).upper()
-                    src_cs = (target_call.src_callsign or "").upper()
-                    if spoken_cs != src_cs:
+                    spoken_cs = m_call.group(1).upper().strip()
+                    src_cs = (target_call.src_callsign or "").upper().strip()
+                    rt_owner = self.get_runtime(uid, target_call.hotspot_id)
+                    own_cs = (getattr(rt_owner.config, "callsign", "") if rt_owner else "").upper().strip()
+                    if spoken_cs != src_cs and (target_call.is_local_tx or spoken_cs != own_cs):
                         old_alias = target_call.talker_alias or ""
                         if f"🎙️ {spoken_cs}" not in old_alias:
                             target_call.talker_alias = f"🎙️ {spoken_cs} · {src_cs}" if src_cs else f"🎙️ {spoken_cs}"
@@ -901,6 +914,21 @@ class HotspotManager:
                     self._on_dmr_frame(hid, frame, user_id=uid)
                 return _frame_cb
 
+            def make_creds_valid_cb(hid: str, uid: int):
+                def _creds_valid_cb() -> bool:
+                    return self._are_bm_credentials_known_valid(hid, user_id=uid)
+                return _creds_valid_cb
+
+            def make_failover_cands_cb(hid: str, uid: int):
+                def _failover_cands_cb(exclude_host: str, limit: int = 15) -> list:
+                    return self._get_bm_failover_candidates(exclude_host, limit=limit)
+                return _failover_cands_cb
+
+            def make_failover_event_cb(hid: str, uid: int):
+                def _failover_event_cb(payload: dict):
+                    self._on_bm_failover_event(hid, payload, user_id=uid)
+                return _failover_event_cb
+
             client = HomeBrewClient(
                 repeater_id=cfg.dmr_id,
                 callsign=cfg.callsign,
@@ -917,6 +945,9 @@ class HotspotManager:
                 xlx_module=getattr(cfg, "xlx_module", "D") or "D",
                 on_status_change=make_status_cb(cfg.id, user_id),
                 on_dmr_frame=make_frame_cb(cfg.id, user_id),
+                check_credentials_valid_cb=make_creds_valid_cb(cfg.id, user_id),
+                get_failover_candidates_cb=make_failover_cands_cb(cfg.id, user_id),
+                on_failover_event_cb=make_failover_event_cb(cfg.id, user_id),
             )
             runtime.client = client
 
@@ -942,24 +973,33 @@ class HotspotManager:
                     high_db=float(arx["eq_high"]) if "eq_high" in arx else None,
                     deemphasis=bool(arx["deemphasis"]) if "deemphasis" in arx else None,
                 )
-        atx = cs.get("audio_tx", {})
+        atx = cs.get("asl_audio_tx", {}) if net_type == "allstar" else cs.get("audio_tx", {})
         if atx and isinstance(atx, dict):
             runtime.tx_dsp.set_settings(
                 hpf_enabled=bool(atx["hpf_enabled"]) if "hpf_enabled" in atx else None,
                 presence_boost=float(atx["presence_boost"]) if "presence_boost" in atx else None,
+                eq_low=float(atx["eq_low"]) if "eq_low" in atx else None,
+                eq_mid=float(atx["eq_mid"]) if "eq_mid" in atx else None,
+                eq_high=float(atx["eq_high"]) if "eq_high" in atx else None,
                 mic_gain=float(atx["mic_gain"]) if "mic_gain" in atx else None,
                 dsp_agc=bool(atx["dsp_agc"]) if "dsp_agc" in atx else None,
+            )
+        elif net_type == "allstar":
+            runtime.tx_dsp.set_settings(
+                hpf_enabled=True,
+                presence_boost=0.0,
+                eq_low=0.0,
+                eq_mid=0.0,
+                eq_high=0.0,
+                mic_gain=0.0,
+                dsp_agc=True,
             )
         vrx = cs.get("ambe_rx", {})
         if vrx and isinstance(vrx, dict) and hasattr(runtime, "vocoder") and hasattr(runtime.vocoder, "set_settings"):
             runtime.vocoder.set_settings(
-                uvquality=min(8, max(1, int(vrx.get("uvquality", 3)))),
                 spectral_enh=bool(vrx.get("spectral_enh", True)),
-                float_mode=bool(vrx.get("float_mode", True)),
-                max_repeats=int(vrx.get("max_repeats", 3)),
-                repeat_decay=float(vrx.get("repeat_decay", 75)) / 100.0,
-                fec_tolerance=int(vrx.get("fec_tolerance", 1)),
-                audio_gain=min(8.0, max(1.0, float(vrx.get("audio_gain", 7.0))))
+                high_band_gain_db=float(vrx.get("high_band_gain_db", 2.5)),
+                unvoiced_gain_db=float(vrx.get("unvoiced_gain_db", -0.4))
             )
 
         if user_id not in self.user_runtimes:
@@ -1715,6 +1755,226 @@ class HotspotManager:
             "user_id": uid,
         }, user_id=uid)
 
+    def _are_bm_credentials_known_valid(self, hid: str, user_id: Optional[int] = None) -> bool:
+        """
+        Returns True if another BrandMeister hotspot belonging to the same user
+        with the exact same DMR ID and password is currently ONLINE or has already
+        authenticated successfully in this session.
+        """
+        uid = user_id if user_id is not None else self.active_user_id
+        rt = self.get_runtime(uid, hid)
+        if not rt or not rt.config:
+            return False
+        target_dmr_id = int(getattr(rt.config, "dmr_id", 0) or 0)
+        target_pwd = str(getattr(rt.config, "bm_password", "") or "")
+        if target_dmr_id <= 0 or not target_pwd:
+            return False
+
+        hs_map = self.user_runtimes.get(uid, {})
+        for other_id, other_rt in hs_map.items():
+            if other_id == hid or not other_rt or not other_rt.config or not other_rt.client:
+                continue
+            other_net = (getattr(other_rt.config, "network_type", "bm") or "bm").lower()
+            if other_net != "bm":
+                continue
+            if int(getattr(other_rt.config, "dmr_id", 0) or 0) == target_dmr_id and str(getattr(other_rt.config, "bm_password", "") or "") == target_pwd:
+                if other_rt.status == BMState.ONLINE or getattr(other_rt.client, "_ever_authenticated_ok", False):
+                    return True
+        return False
+
+    def _get_bm_failover_candidates(self, exclude_host: str, limit: int = 15) -> List[Dict[str, Any]]:
+        """
+        Returns up to `limit` (15) BrandMeister master servers sorted by ascending ping time,
+        excluding `exclude_host`. Uses the primary benchmark table from bm_ping_service
+        (or server_probe_service fallback).
+        """
+        excl = (exclude_host or "").strip().lower()
+        raw_list: List[Dict[str, Any]] = []
+        try:
+            import main as _main_mod
+            if hasattr(_main_mod, "bm_ping_service") and _main_mod.bm_ping_service:
+                raw_list = list(_main_mod.bm_ping_service.get_benchmark_results() or [])
+        except Exception as e:
+            logger.debug(f"[MANAGER] Could not read bm_ping_service benchmark results: {e}")
+
+        if not raw_list:
+            try:
+                from .server_probe import server_probe_service
+                probe_data = server_probe_service.get_probe_results("bm")
+                raw_list = list(probe_data.get("results") or [])
+            except Exception as e:
+                logger.debug(f"[MANAGER] Could not read server_probe_service BM results: {e}")
+
+        if not raw_list:
+            try:
+                import main as _main_mod
+                for item in getattr(_main_mod, "BM_MASTERS_DEFAULT", []):
+                    mid = item.get("id")
+                    cc = (item.get("country") or "").upper()
+                    c_name, c_flag = getattr(_main_mod, "COUNTRY_NAMES_RU", {}).get(cc, (cc or "BM", "🌐"))
+                    raw_list.append({
+                        "id": mid,
+                        "country_code": cc,
+                        "country_name": c_name,
+                        "flag": c_flag,
+                        "host": f"{mid}.master.brandmeister.network",
+                        "avg_ping": None,
+                        "udp_ms": None,
+                        "status": "ok",
+                    })
+            except Exception:
+                pass
+
+        reachable: List[Dict[str, Any]] = []
+        fallback_all: List[Dict[str, Any]] = []
+        seen_hosts = set()
+
+        for srv in raw_list:
+            host = str(srv.get("host") or "").strip()
+            if not host:
+                continue
+            h_low = host.lower()
+            if h_low == excl or h_low in seen_hosts:
+                continue
+            seen_hosts.add(h_low)
+            fallback_all.append(srv)
+
+            st = str(srv.get("state") or "").lower()
+            status = str(srv.get("status") or "").lower()
+            udp_ok = srv.get("udp_ok")
+            if udp_ok is False or status == "unreachable" or st in ("refused", "dns_fail", "no_reply"):
+                continue
+            reachable.append(srv)
+
+        pool = reachable if reachable else fallback_all
+
+        def _ping_sort_key(item: Dict[str, Any]):
+            u_ms = item.get("udp_ms")
+            a_ms = item.get("avg_ping")
+            ping_val = float(u_ms) if u_ms is not None else (float(a_ms) if a_ms is not None else 9999.0)
+            loss_val = float(item.get("loss_pct") if item.get("loss_pct") is not None else 0.0)
+            return (ping_val, loss_val, str(item.get("host") or ""))
+
+        pool.sort(key=_ping_sort_key)
+        return pool[:max(1, int(limit or 15))]
+
+    @staticmethod
+    def _format_bm_candidate_label(cand: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(cand, dict):
+            return "неизвестный сервер"
+        host = str(cand.get("host") or "").strip()
+        flag = str(cand.get("flag") or "🌐").strip()
+        c_name = str(cand.get("country_name") or cand.get("country_code") or "").strip()
+        u_ms = cand.get("udp_ms")
+        a_ms = cand.get("avg_ping")
+        ping_val = u_ms if u_ms is not None else a_ms
+        ping_str = f"{int(round(float(ping_val)))} мс" if ping_val is not None else "пинг н/д"
+        if c_name:
+            return f"<code>{host}</code> ({flag} {c_name}, {ping_str})"
+        return f"<code>{host}</code> ({ping_str})"
+
+    def _on_bm_failover_event(self, hid: str, payload: Dict[str, Any], user_id: Optional[int] = None):
+        uid = user_id if user_id is not None else self.active_user_id
+        rt = self.get_runtime(uid, hid)
+        if not rt or not rt.config:
+            return
+
+        ev = str(payload.get("event") or "")
+        hs_name = str(getattr(rt.config, "name", hid) or hid)
+        callsign = str(getattr(rt.config, "callsign", "") or "")
+        eff_id = rt.client.effective_repeater_id if rt.client else getattr(rt.config, "dmr_id", 0)
+        primary_host = str(payload.get("primary_host") or getattr(rt.config, "bm_master_host", ""))
+
+        msg_html = ""
+        if ev == "failover_started":
+            unhealthy_sec = payload.get("unhealthy_seconds", 60)
+            reason = str(payload.get("reason") or "недоступен / неадекватный ответ")
+            next_cand = payload.get("next_candidate") or {}
+            next_idx = payload.get("next_index", 1)
+            total_c = payload.get("total_candidates", 15)
+            cand_label = self._format_bm_candidate_label(next_cand)
+            msg_html = (
+                f"⚠️ <b>Нештатное поведение сервера BrandMeister (&gt;{unhealthy_sec} с)</b>\n"
+                f"Хотспот: <b>{hs_name}</b> ({callsign}, ID <code>{eff_id}</code>)\n"
+                f"Проблемный сервер: <code>{primary_host}</code>\n"
+                f"Причина: <i>{reason}</i>\n"
+                f"🔄 Перестроение на сервер #{next_idx} из {total_c} по таблице пинга:\n"
+                f"➡️ {cand_label}"
+            )
+        elif ev == "candidate_failed_next":
+            failed_cand = payload.get("failed_candidate") or {}
+            failed_idx = payload.get("failed_index", 1)
+            failed_reason = str(payload.get("failed_reason") or "нет ответа")
+            next_cand = payload.get("next_candidate") or {}
+            next_idx = payload.get("next_index", 2)
+            total_c = payload.get("total_candidates", 15)
+            failed_label = self._format_bm_candidate_label(failed_cand)
+            next_label = self._format_bm_candidate_label(next_cand)
+            msg_html = (
+                f"❌ <b>Неудачное подключение к резервному серверу #{failed_idx}/{total_c}</b>\n"
+                f"Хотспот: <b>{hs_name}</b> (ID <code>{eff_id}</code>)\n"
+                f"Сервер: {failed_label}\n"
+                f"Причина: <i>{failed_reason}</i>\n"
+                f"🔄 Переход к следующему серверу #{next_idx}/{total_c}:\n"
+                f"➡️ {next_label}"
+            )
+        elif ev == "failover_succeeded":
+            new_host = str(payload.get("new_host") or "").strip()
+            cand = payload.get("candidate") or {"host": new_host}
+            idx_num = payload.get("index", 1)
+            total_c = payload.get("total_candidates", 15)
+            cand_label = self._format_bm_candidate_label(cand)
+
+            if new_host:
+                rt.config.bm_master_host = new_host
+                settings = self.user_settings.get(uid, self.settings)
+                for h_cfg in getattr(settings, "hotspots", []):
+                    if h_cfg.id == rt.config.id:
+                        h_cfg.bm_master_host = new_host
+                        break
+                if uid == 1:
+                    save_app_settings(settings)
+                self._notify_async({
+                    "type": "hotspot_updated",
+                    "hotspot": rt.to_dict(),
+                    "user_id": uid,
+                }, user_id=uid)
+
+            msg_html = (
+                f"✅ <b>Успешное переключение на резервный сервер BM (#{idx_num}/{total_c})</b>\n"
+                f"Хотспот: <b>{hs_name}</b> ({callsign}, ID <code>{eff_id}</code>)\n"
+                f"Старый сервер: <code>{primary_host}</code>\n"
+                f"Новый сервер: {cand_label}\n"
+                f"Статус: <b>ONLINE</b>"
+            )
+        elif ev == "all_candidates_failed":
+            total_c = payload.get("total_candidates", 15)
+            failed_reason = str(payload.get("failed_reason") or "нет ответа")
+            msg_html = (
+                f"🚨 <b>Не удалось подключиться ни к одному из {total_c} резервных серверов BM</b>\n"
+                f"Хотспот: <b>{hs_name}</b> ({callsign}, ID <code>{eff_id}</code>)\n"
+                f"Последняя ошибка: <i>{failed_reason}</i>\n"
+                f"↩️ Возврат на исходный сервер <code>{primary_host}</code> (повторный перебор не ранее чем через 10 мин)."
+            )
+
+        if msg_html:
+            async def _send_tg():
+                try:
+                    import alerts_config
+                    ok, err = await asyncio.to_thread(alerts_config.send_bm_failover_telegram_alert, msg_html)
+                    if not ok:
+                        logger.debug(f"[BM-FAILOVER] Telegram alert not sent: {err}")
+                    else:
+                        logger.info(f"[BM-FAILOVER] Telegram alert sent for event '{ev}' on hotspot '{hs_name}'")
+                except Exception as e:
+                    logger.warning(f"[BM-FAILOVER] Error sending Telegram alert: {e}")
+
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_send_tg())
+            except RuntimeError:
+                pass
+
     def _on_dmr_frame(self, hid: str, frame: DMRFrame, user_id: Optional[int] = None):
         uid = user_id if user_id is not None else self.active_user_id
         rt = self.get_runtime(uid, hid)
@@ -1772,6 +2032,9 @@ class HotspotManager:
                     self.transcriber.on_call_ended(hid, frame.slot, call_id=active_call.id if active_call else "")
                 if hasattr(self, "recorder") and self.recorder:
                     self.recorder.on_rx_call_ended(hid, frame.slot, call_id=active_call.id if active_call else "")
+                if hasattr(rt, "rx_jitter_buffers") and rt.rx_jitter_buffers.get(frame.slot):
+                    rt.rx_jitter_buffers[frame.slot].drain_sync()
+                    rt.rx_jitter_buffers[frame.slot].reset()
                 rt.vocoder.reset_slot(frame.slot)
                 rt.agc.reset_slot(frame.slot)
                 if hasattr(rt, "equalizer"):
@@ -1944,50 +2207,79 @@ class HotspotManager:
                 rt._active_rx_slot = frame.slot
                 rt._last_rx_burst_time = now
 
-            pcm_bytes = rt.vocoder.decode_burst(frame.payload, slot=frame.slot)
-            if pcm_bytes:
-                # Server-side AGC: normalize audio level before broadcast
-                if rt.agc.enabled:
-                    pcm_bytes = rt.agc.process_burst(pcm_bytes, slot=frame.slot)
+            jb = self._get_or_create_rx_jitter_buffer(uid, rt, hid, frame.slot)
+            jb.push(frame)
 
-                # Server-side 3-band Equalizer & De-emphasis
-                if hasattr(rt, "equalizer") and rt.equalizer:
-                    pcm_bytes = rt.equalizer.process_burst(pcm_bytes, slot=frame.slot)
+    def _get_or_create_rx_jitter_buffer(self, uid: int, rt: HotspotRuntime, hid: str, slot: int) -> DMRRxJitterBuffer:
+        if not hasattr(rt, "rx_jitter_buffers") or rt.rx_jitter_buffers is None:
+            rt.rx_jitter_buffers = {}
+        jb = rt.rx_jitter_buffers.get(slot)
+        if jb is None:
+            cushion = max(1, min(10, getattr(rt, "backend_buffer_ms", 120) // 60)) if getattr(rt, "backend_buffer_ms", 120) > 0 else 2
+            def _on_audio_out(slot_num: int, pcm_8k: bytes, meta_list: list, frame_ref: Any):
+                self._dispatch_decoded_rx_burst(uid, rt, hid, slot_num, pcm_8k, meta_list, frame_ref)
 
-                hid_bytes = hid.encode("utf-8")
-                tagged_audio = bytes([frame.slot, len(hid_bytes)]) + hid_bytes + pcm_bytes
-                self._enqueue_or_send_rx_audio(uid, rt, frame.slot, tagged_audio)
+            jb = DMRRxJitterBuffer(
+                slot=slot,
+                vocoder=rt.vocoder,
+                on_audio_out=_on_audio_out,
+                cushion_packets=cushion,
+                max_plc_bursts=2,
+                max_queue_depth=6,
+            )
+            rt.rx_jitter_buffers[slot] = jb
+        return jb
 
-                # FreeDMR beacon / dial-a-tg filter (Step 6.5): ignore All Call 16777215 and TG 5000 from auto-record/AI
-                is_freedmr_beacon = (
-                    (getattr(rt.config, "network_type", "bm") or "bm").lower() == "freedmr"
-                    and (frame.dst_id == 16777215 or frame.src_id == 5000)
-                )
-                if is_freedmr_beacon:
-                    logger.debug(f"[MANAGER] Filtering FreeDMR beacon/service audio (src={frame.src_id}, dst={frame.dst_id}) from transcriber/recorder")
-                else:
-                    if self.transcriber and self.transcriber.is_slot_enabled(hid, frame.slot):
-                        curr_call = active_calls.get(f"{hid}_{frame.slot}")
-                        self.transcriber.feed_audio(
-                            hid, frame.slot, frame.src_id, slot_state.src_callsign, pcm_bytes,
-                            call_id=curr_call.id if curr_call else ""
-                        )
-                    if hasattr(self, "recorder") and self.recorder:
-                        curr_call = active_calls.get(f"{hid}_{frame.slot}")
-                        auto_rec = getattr(rt.config, "auto_record", False)
-                        self.recorder.feed_rx(
-                            hotspot_id=hid,
-                            slot=frame.slot,
-                            src_id=frame.src_id,
-                            src_callsign=slot_state.src_callsign,
-                            src_name=slot_state.src_name,
-                            talker_alias=slot_state.talker_alias,
-                            dst_id=frame.dst_id,
-                            pcm_bytes=pcm_bytes,
-                            call_id=curr_call.id if curr_call else "",
-                            user_id=uid,
-                            auto_record=auto_rec,
-                        )
+    def _dispatch_decoded_rx_burst(
+        self,
+        uid: int,
+        rt: HotspotRuntime,
+        hid: str,
+        slot: int,
+        pcm_8k: bytes,
+        meta_list: list,
+        frame: Any
+    ):
+        if not pcm_8k:
+            return
+
+        hid_bytes = hid.encode("utf-8")
+        tagged_audio = bytes([slot, len(hid_bytes)]) + hid_bytes + pcm_8k
+        self._broadcast_audio_async(tagged_audio, user_id=uid)
+
+        src_id = getattr(frame, "src_id", 0)
+        dst_id = getattr(frame, "dst_id", 0)
+        is_freedmr_beacon = (
+            (getattr(rt.config, "network_type", "bm") or "bm").lower() == "freedmr"
+            and (dst_id == 16777215 or src_id == 5000)
+        )
+        if is_freedmr_beacon:
+            return
+
+        slot_state = rt.ts1 if slot == 1 else rt.ts2
+        active_calls = self._get_user_active_calls(uid)
+        curr_call = active_calls.get(f"{hid}_{slot}")
+
+        if self.transcriber and self.transcriber.is_slot_enabled(hid, slot):
+            self.transcriber.feed_audio(
+                hid, slot, src_id, slot_state.src_callsign, pcm_8k,
+                call_id=curr_call.id if curr_call else ""
+            )
+        if hasattr(self, "recorder") and self.recorder:
+            auto_rec = getattr(rt.config, "auto_record", False)
+            self.recorder.feed_rx(
+                hotspot_id=hid,
+                slot=slot,
+                src_id=src_id,
+                src_callsign=slot_state.src_callsign,
+                src_name=slot_state.src_name,
+                talker_alias=slot_state.talker_alias,
+                dst_id=dst_id,
+                pcm_bytes=pcm_8k,
+                call_id=curr_call.id if curr_call else "",
+                user_id=uid,
+                auto_record=auto_rec,
+            )
 
     async def _resolve_caller_async(self, hid: str, slot: int, src_id: int, user_id: Optional[int] = None):
         try:
@@ -2084,6 +2376,9 @@ class HotspotManager:
                                 if hasattr(self, "recorder") and self.recorder:
                                     self.recorder.on_rx_call_ended(hid, slot_num, call_id=active_call.id if active_call else "")
 
+                                if hasattr(rt, "rx_jitter_buffers") and rt.rx_jitter_buffers.get(slot_num):
+                                    rt.rx_jitter_buffers[slot_num].reset()
+
                                 rt.vocoder.reset_slot(slot_num)
                                 rt.agc.reset_slot(slot_num)
                                 if hasattr(rt, "equalizer"):
@@ -2109,8 +2404,13 @@ class HotspotManager:
         target_runtimes = list(self.get_user_runtimes(user_id).values()) if user_id is not None else [
             rt for hs_map in self.user_runtimes.values() for rt in hs_map.values()
         ]
+        cushion = max(1, min(10, val // 60)) if val > 0 else 2
         for rt in target_runtimes:
             rt.backend_buffer_ms = val
+            if hasattr(rt, "rx_jitter_buffers") and rt.rx_jitter_buffers:
+                for jb in rt.rx_jitter_buffers.values():
+                    if jb:
+                        jb.cushion_packets = cushion
         return val
 
     def _enqueue_or_send_rx_audio(self, user_id: int, rt: HotspotRuntime, slot: int, tagged_audio: bytes):
@@ -2272,6 +2572,21 @@ class HotspotManager:
             return rt.agc.get_settings()
         return {"enabled": True, "profile": "standard", "min_gain_db": -12, "max_gain_db": 12, "hang_time": 0.35}
 
+    def set_vocoder_settings(self, spectral_enh: Optional[bool] = None, high_band_gain_db: Optional[float] = None, unvoiced_gain_db: Optional[float] = None, user_id: Optional[int] = None, **kwargs) -> None:
+        """Apply AMBE+2 vocoder settings (mbelib-neo) across all runtimes for user."""
+        uid = user_id if user_id is not None else self.active_user_id
+        rts = list(self.user_runtimes.get(uid, {}).values()) if user_id is not None else [rt for hs in self.user_runtimes.values() for rt in hs.values()]
+        enh = spectral_enh if spectral_enh is not None else True
+        high_band = float(high_band_gain_db) if high_band_gain_db is not None else 2.5
+        unvoiced = float(unvoiced_gain_db) if unvoiced_gain_db is not None else -0.4
+        for rt in rts:
+            if hasattr(rt, "vocoder") and hasattr(rt.vocoder, "set_settings"):
+                rt.vocoder.set_settings(
+                    spectral_enh=enh,
+                    high_band_gain_db=high_band,
+                    unvoiced_gain_db=unvoiced,
+                )
+
 
     def start_tx(
         self,
@@ -2295,11 +2610,14 @@ class HotspotManager:
             return False
 
         effective_hid = rt.config.id if rt else (hid or "default")
+        is_allstar = bool(rt and getattr(rt.config, "network_type", "bm") == "allstar")
         src_id = rt.config.dmr_id if rt else 0
         src_callsign = rt.config.callsign if rt else "ME"
         send_ta = getattr(rt.config, "send_talker_alias", True) if rt else True
         talker_alias = ((rt.config.talker_alias or rt.config.callsign) if send_ta else "") if rt else "ME"
         src_name = "ME (ProxDMR)"
+        tx_city = ""
+        tx_country = ""
 
         # XLX guard: enforce slot=2 and 7-digit src_id for xlxd validation
         if rt and getattr(rt.config, "network_type", "bm") == "xlx":
@@ -2317,8 +2635,23 @@ class HotspotManager:
             elif dst_id == 0:
                 dst_id = 9
 
-        # AllStarLink: signal start of PTT transmission via AllStarClientAdapter
-        if rt and getattr(rt.config, "network_type", "bm") == "allstar":
+        # AllStarLink: resolve user's own node & metadata dynamically and signal start of PTT
+        if is_allstar:
+            slot = 1
+            own_node_str = str(getattr(rt.config, "allstar_node", "1999") or "1999").strip()
+            src_id = int(own_node_str) if own_node_str.isdigit() else 1999
+            try:
+                from allstar_directory import allstar_dir_mgr
+                own_info = allstar_dir_mgr.get_node_info(own_node_str, fallback_callsign=src_callsign) or {}
+            except Exception:
+                own_info = {}
+            cfg_cs = str(getattr(rt.config, "callsign", "") or "").strip()
+            src_callsign = (cfg_cs if (cfg_cs and cfg_cs.upper() != "N0CALL") else (own_info.get("callsign") or f"Node {own_node_str}")).strip()
+            src_name = (own_info.get("name") or getattr(rt.config, "talker_alias", "") or src_callsign).strip()
+            tx_city = (own_info.get("city") or own_info.get("location") or "").strip()
+            tx_country = (own_info.get("country") or "").strip()
+            talker_alias = f"{src_callsign} · {tx_city}".strip(" ·") if tx_city else src_callsign
+
             if rt.client and hasattr(rt.client, "start_ptt"):
                 rt.client.start_ptt()
             elif hasattr(rt, "allstar_client") and rt.allstar_client:
@@ -2396,7 +2729,6 @@ class HotspotManager:
                 user_id=uid,
                 auto_record=auto_rec,
             )
-        is_allstar = rt and getattr(rt.config, "network_type", "bm") == "allstar"
         tx_call = CallLogEntry(
             id=tx_call_id,
             timestamp=tx_st.start_time,
@@ -2408,6 +2740,8 @@ class HotspotManager:
             talker_alias=talker_alias,
             dst_id=dst_id,
             dst_name=f"Node {dst_id}" if is_allstar else f"TG {dst_id}",
+            city=tx_city,
+            country=tx_country,
             call_type=tx_st.call_type,
             active=True,
             is_tx=True,
@@ -2714,10 +3048,12 @@ class HotspotManager:
         duration = 0.0
         if active_tx_call:
             active_tx_call.active = False
-            active_tx_call.duration = max(0.1, now - active_tx_call.timestamp)
+            active_tx_call.duration = max(0.5, now - active_tx_call.timestamp)
             duration = active_tx_call.duration
+            self._history_dirty.add(uid)
+            self._save_calls_history(uid)
         elif tx_st.start_time > 0:
-            duration = max(0.1, now - tx_st.start_time)
+            duration = max(0.5, now - tx_st.start_time)
 
         tx_st.active = False
         tx_st.is_releasing = False

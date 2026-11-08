@@ -732,8 +732,8 @@ export function openTotConfigModal(hid = null, anchorEl = null) {
     } else if (
       e.key === "Enter" &&
       e.target !== btnTestRoger &&
-      !(e.target && e.target.closest && e.target.closest("#btnTestRogerBeep")) &&
-      (e.target === rangeInput || e.target === popup || e.target.closest(".tot-config-popup"))
+      !(e.target && typeof e.target.closest === "function" && e.target.closest("#btnTestRogerBeep")) &&
+      (e.target === rangeInput || e.target === popup || (e.target && typeof e.target.closest === "function" && e.target.closest(".tot-config-popup")))
     ) {
       e.preventDefault();
       doSave();

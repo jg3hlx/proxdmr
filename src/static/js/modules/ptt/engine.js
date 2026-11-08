@@ -5,7 +5,7 @@
 
 import { getCountryInfo, updateFlagElement } from '../core/formatters.js?v=2.9.367';
 import { updateAllHotspotRecUI } from '../audio/routing.js';
-import { initAudio, applyTxDspSettings, startVuMeter, stopVuMeter, resetTxDsp, getVuState, ensureVuMeterLoop } from '../audio/dsp.js?v=2.9.525';
+import { initAudio, releaseMicrophone, applyTxDspSettings, syncActiveAudioTxPreset, startVuMeter, stopVuMeter, resetTxDsp, getVuState, ensureVuMeterLoop } from '../audio/dsp.js?v=2.9.628';
 import { resolveHotspotId as _resolveHotspotId, getHotspotSlot as _getHotspotSlot } from '../core/state.js';
 import { getHotspotTot, setHotspotTot, getHotspotPttMode, setHotspotPttMode, getHotspotRogerBeep, getHotspotRogerBeepPattern, playLocalRogerBeep, getRogerBeepDurationMs, formatTotDuration, openTotConfigModal, closeTotConfigModal } from './tot.js?v=2.9.542';
 import { triggerHaptic } from '../core/haptic.js';
@@ -344,8 +344,8 @@ function _isVolumeDownPttEnabled() {
       if (!hasTxLink) {
         if (typeof window.showToast === "function") {
           const msg = links.length > 0
-            ? "🎧 Все узлы в режиме Монитор (*2). Нажмите на плитку подключённого узла (красный *3) для передачи"
-            : "⚠️ Нет подключённых узлов на передачу (*3). Подключите узел и включите красный режим (*3)";
+            ? (window.t ? window.t("asl.ptt_all_monitor_warn", {}, "🎧 Все узлы в режиме Монитор (*2). Нажмите на плитку подключённого узла (красный *3) для передачи") : "🎧 Все узлы в режиме Монитор (*2). Нажмите на плитку подключённого узла (красный *3) для передачи")
+            : (window.t ? window.t("asl.ptt_no_tx_links_warn", {}, "⚠️ Нет подключённых узлов на передачу (*3). Подключите узел и включите красный режим (*3)") : "⚠️ Нет подключённых узлов на передачу (*3). Подключите узел и включите красный режим (*3)");
           window.showToast(msg, "warning", 3200);
         }
         triggerTactileVibrate([40, 60, 40]);
@@ -536,6 +536,12 @@ function _isVolumeDownPttEnabled() {
             const tx2 = targetCard.querySelector(".vfo-ts2-tx");
             if (tx2) tx2.classList.add("active");
           }
+        } else {
+          const aslHsTx = (window.currentHotspots || []).find(h => String(h.id) === String(hid));
+          if (aslHsTx) aslHsTx._aslUserTxActive = true;
+          if (typeof window.renderAslNodeDashboard === "function") {
+            window.renderAslNodeDashboard(hid);
+          }
         }
       }
 
@@ -576,6 +582,9 @@ function _isVolumeDownPttEnabled() {
 
       const isPrivateCall = (pttTarget && (pttTarget.type === "CALLER" || pttTarget.type === "ID")) || (targetTg === 9990 || targetTg > 999999 || !!(window.USER_CALLSIGNS || {})[targetTg]);
 
+      if (typeof syncActiveAudioTxPreset === "function") {
+        try { syncActiveAudioTxPreset(hid); } catch (_) {}
+      }
       applyTxDspSettings();
       if (window.workletNode && window.workletNode.port) {
         window.workletNode.port.postMessage({ command: "set_active", active: true });
@@ -614,6 +623,14 @@ function _isVolumeDownPttEnabled() {
     const targetHid = hid || window.activeTxHotspotId || window.activeHotspotId;
     window.isPttPressed = false;
     window.activeTxHotspotId = null;
+    (window.currentHotspots || []).forEach(h => {
+      if (h && h._aslUserTxActive) {
+        h._aslUserTxActive = false;
+        if (typeof window.renderAslNodeDashboard === "function") {
+          window.renderAslNodeDashboard(h.id);
+        }
+      }
+    });
 
     if (totCountdownInterval) {
       clearInterval(totCountdownInterval);
@@ -721,9 +738,14 @@ window.triggerAslTxReadyHaptic = function(hotspotId) {
     // 1. FIRST: Instantly turn off all TX visual indicators (red PTT button, red TS row, TX badge, VU meter)
     clearTxIndicationUI(hid);
 
-    // 2. Immediately stop microphone capture so room audio is not transmitted
+    // 2. Immediately stop microphone capture and release OS hardware
     if (window.workletNode && window.workletNode.port) {
       window.workletNode.port.postMessage({ command: "set_active", active: false });
+    }
+    if (typeof releaseMicrophone === "function") {
+      releaseMicrophone();
+    } else if (typeof window.releaseMicrophone === "function") {
+      window.releaseMicrophone();
     }
 
     // 3. AFTER TX indication is cleared: run post-release actions (mute tail, haptics, Roger Beep, server release)

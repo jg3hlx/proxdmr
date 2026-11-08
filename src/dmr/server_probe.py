@@ -456,6 +456,24 @@ class ServerProbeService:
         }
         self._save_cache()
 
+        # Sync BM probe table back to bm_ping_service benchmark table
+        if network_type == "bm" and sorted_final:
+            try:
+                import main as _main_mod
+                if hasattr(_main_mod, "bm_ping_service") and _main_mod.bm_ping_service:
+                    synced_bm = []
+                    for item in sorted_final:
+                        d_item = dict(item)
+                        if d_item.get("avg_ping") is None and d_item.get("udp_ms") is not None:
+                            d_item["avg_ping"] = int(round(float(d_item["udp_ms"])))
+                        d_item["udp_ok"] = (d_item.get("state") == "online")
+                        d_item["status"] = "ok" if d_item.get("state") in ("online", "icmp_only") else "unreachable"
+                        synced_bm.append(d_item)
+                    _main_mod.bm_ping_service.cached_benchmark_results = synced_bm
+                    _main_mod.bm_ping_service._save_benchmark_results()
+            except Exception as e:
+                logger.debug(f"[SERVER_PROBE] Could not sync BM probe results to bm_ping_service: {e}")
+
         logger.info(
             f"[SERVER_PROBE] Probe for '{network_type}' completed "
             f"({len(tested_results)}/{total} tested, cancelled={is_cancelled})"

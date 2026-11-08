@@ -15,6 +15,12 @@ class DMRMicProcessor extends AudioWorkletProcessor {
     this.lastInputSample = 0.0;
     this.isActive = true;
 
+    // Anti-aliasing 4th-order Butterworth LPF state (fc = 3400 Hz before 8000 Hz decimation)
+    this._aaSampleRate = 0;
+    this._aaBiquad1 = null;
+    this._aaBiquad2 = null;
+    this._filteredBuf = new Float32Array(256);
+
     // Noise Gate configuration
     this.gateEnabled = true;
     this.gateThresholdDb = -45;
@@ -32,6 +38,7 @@ class DMRMicProcessor extends AudioWorkletProcessor {
           this.lastInputSample = 0.0;
           this.gateHoldCounter = 0;
           this.isGateOpen = false;
+          this._resetAntiAliasFilter();
         }
       } else if (event.data.command === "set_tx_params") {
         if (event.data.gateEnabled !== undefined) {
@@ -44,6 +51,54 @@ class DMRMicProcessor extends AudioWorkletProcessor {
     };
   }
 
+  _createLowpassSection(fc, q, fs) {
+    const w0 = (2.0 * Math.PI * fc) / fs;
+    const cosw0 = Math.cos(w0);
+    const sinw0 = Math.sin(w0);
+    const alpha = sinw0 / (2.0 * q);
+    const b0 = (1.0 - cosw0) * 0.5;
+    const b1 = 1.0 - cosw0;
+    const b2 = (1.0 - cosw0) * 0.5;
+    const a0 = 1.0 + alpha;
+    const a1 = -2.0 * cosw0;
+    const a2 = 1.0 - alpha;
+    return {
+      b0: b0 / a0,
+      b1: b1 / a0,
+      b2: b2 / a0,
+      a1: a1 / a0,
+      a2: a2 / a0,
+      x1: 0.0,
+      x2: 0.0,
+      y1: 0.0,
+      y2: 0.0
+    };
+  }
+
+  _ensureAntiAliasFilter(fs) {
+    if (this._aaSampleRate === fs && this._aaBiquad1 && this._aaBiquad2) {
+      return;
+    }
+    this._aaSampleRate = fs;
+    if (fs > 8800) {
+      // 4th-order Butterworth LPF @ 3400 Hz (cascaded Q1 = 0.5411961, Q2 = 1.3065630)
+      this._aaBiquad1 = this._createLowpassSection(3400.0, 0.5411961, fs);
+      this._aaBiquad2 = this._createLowpassSection(3400.0, 1.3065630, fs);
+    } else {
+      this._aaBiquad1 = null;
+      this._aaBiquad2 = null;
+    }
+  }
+
+  _resetAntiAliasFilter() {
+    if (this._aaBiquad1) {
+      this._aaBiquad1.x1 = this._aaBiquad1.x2 = this._aaBiquad1.y1 = this._aaBiquad1.y2 = 0.0;
+    }
+    if (this._aaBiquad2) {
+      this._aaBiquad2.x1 = this._aaBiquad2.x2 = this._aaBiquad2.y1 = this._aaBiquad2.y2 = 0.0;
+    }
+  }
+
   process(inputs, outputs, parameters) {
     if (outputs && outputs[0] && outputs[0][0]) {
       outputs[0][0].fill(0);
@@ -53,10 +108,37 @@ class DMRMicProcessor extends AudioWorkletProcessor {
       return true;
     }
 
-    const channelData = input[0];
-    const inputLen = channelData.length;
+    const rawChannelData = input[0];
+    const inputLen = rawChannelData.length;
     const inputSampleRate = sampleRate; // Global in AudioWorkletGlobalScope
     const ratio = inputSampleRate / this.targetSampleRate;
+
+    this._ensureAntiAliasFilter(inputSampleRate);
+    let channelData = rawChannelData;
+    if (this._aaBiquad1 && this._aaBiquad2) {
+      if (this._filteredBuf.length < inputLen) {
+        this._filteredBuf = new Float32Array(inputLen);
+      }
+      const f1 = this._aaBiquad1;
+      const f2 = this._aaBiquad2;
+      for (let i = 0; i < inputLen; i++) {
+        const x = rawChannelData[i];
+        const y1 = f1.b0 * x + f1.b1 * f1.x1 + f1.b2 * f1.x2 - f1.a1 * f1.y1 - f1.a2 * f1.y2;
+        f1.x2 = f1.x1;
+        f1.x1 = x;
+        f1.y2 = f1.y1;
+        f1.y1 = y1;
+
+        const y2 = f2.b0 * y1 + f2.b1 * f2.x1 + f2.b2 * f2.x2 - f2.a1 * f2.y1 - f2.a2 * f2.y2;
+        f2.x2 = f2.x1;
+        f2.x1 = y1;
+        f2.y2 = f2.y1;
+        f2.y1 = y2;
+
+        this._filteredBuf[i] = y2;
+      }
+      channelData = this._filteredBuf;
+    }
 
     while (this.phase < inputLen) {
       const idx = Math.floor(this.phase);

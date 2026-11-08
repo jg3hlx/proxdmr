@@ -1449,19 +1449,21 @@ async function populateVoiceSelect(selectEl, engine, targetLang, currentVoiceVal
     selectEl.innerHTML = "";
     selectEl.disabled = false;
     const isArabic = (currentVoiceValue && ["fahad", "sultan", "noura", "lulwa", "aisha"].includes(currentVoiceValue));
+    const gMale = window.t ? window.t("transcriber.gender_male", {}, "Мужской") : "Мужской";
+    const gFemale = window.t ? window.t("transcriber.gender_female", {}, "Женский") : "Женский";
     const groqVoices = isArabic ? [
-      { value: "fahad", label: "Fahad — Мужской (Arabic Saudi)" },
-      { value: "sultan", label: "Sultan — Мужской (Arabic Saudi)" },
-      { value: "noura", label: "Noura — Женский (Arabic Saudi)" },
-      { value: "lulwa", label: "Lulwa — Женский (Arabic Saudi)" },
-      { value: "aisha", label: "Aisha — Женский (Arabic Saudi)" }
+      { value: "fahad", label: `Fahad — ${gMale} (Arabic Saudi)` },
+      { value: "sultan", label: `Sultan — ${gMale} (Arabic Saudi)` },
+      { value: "noura", label: `Noura — ${gFemale} (Arabic Saudi)` },
+      { value: "lulwa", label: `Lulwa — ${gFemale} (Arabic Saudi)` },
+      { value: "aisha", label: `Aisha — ${gFemale} (Arabic Saudi)` }
     ] : [
-      { value: "troy", label: "Troy — Мужской (US, выразительный)" },
-      { value: "hannah", label: "Hannah — Женский (US, выразительный)" },
-      { value: "autumn", label: "Autumn — Женский (US, спокойный)" },
-      { value: "diana", label: "Diana — Женский (US, деловой)" },
-      { value: "austin", label: "Austin — Мужской (US, энергичный)" },
-      { value: "daniel", label: "Daniel — Мужской (US, дикторский)" }
+      { value: "troy", label: `Troy — ${gMale} (US)` },
+      { value: "hannah", label: `Hannah — ${gFemale} (US)` },
+      { value: "autumn", label: `Autumn — ${gFemale} (US)` },
+      { value: "diana", label: `Diana — ${gFemale} (US)` },
+      { value: "austin", label: `Austin — ${gMale} (US)` },
+      { value: "daniel", label: `Daniel — ${gMale} (US)` }
     ];
     groqVoices.forEach(v => {
       const opt = document.createElement("option");
@@ -1495,11 +1497,14 @@ async function populateVoiceSelect(selectEl, engine, targetLang, currentVoiceVal
       opt.value = "";
       opt.disabled = true;
       opt.selected = true;
-      opt.textContent = `⚠️ Язык [${cleanLang.toUpperCase()}] не поддерживается в Silero`;
+      const unsupMsg = window.t
+        ? window.t("transcriber.silero_lang_unsupported", { lang: cleanLang.toUpperCase() }, `⚠️ Язык [${cleanLang.toUpperCase()}] не поддерживается в Silero TTS`)
+        : `⚠️ Язык [${cleanLang.toUpperCase()}] не поддерживается в Silero TTS`;
+      opt.textContent = unsupMsg;
       selectEl.appendChild(opt);
       if (hintEl) {
         hintEl.style.display = "block";
-        hintEl.innerHTML = `<span style="color:#ff4d4f;font-weight:600;">⚠️ Язык [${cleanLang.toUpperCase()}] не поддерживается в Silero TTS.</span> Рекомендуется выбрать <b>Piper TTS</b> или <b>Gemini API</b>.`;
+        hintEl.innerHTML = `<span style="color:#ff4d4f;font-weight:600;">${unsupMsg}.</span>`;
       }
       return;
     }
@@ -1534,10 +1539,16 @@ async function populateVoiceSelect(selectEl, engine, targetLang, currentVoiceVal
         { id: "fr_0", name: "Voix 0 (Féminin)" }
       ] : [])))));
     }
+    const gFemale = window.t ? window.t("transcriber.gender_female", {}, "Женский") : "Женский";
+    const gMale = window.t ? window.t("transcriber.gender_male", {}, "Мужской") : "Мужской";
     sileroVoices.forEach(v => {
       const opt = document.createElement("option");
       opt.value = v.id;
-      opt.textContent = v.name;
+      let label = v.name || v.id;
+      if (typeof label === "string") {
+        label = label.replace(/Женский/g, gFemale).replace(/Мужской/g, gMale);
+      }
+      opt.textContent = label;
       selectEl.appendChild(opt);
     });
     if (currentVoiceValue && Array.from(selectEl.options).some(o => o.value === currentVoiceValue)) {

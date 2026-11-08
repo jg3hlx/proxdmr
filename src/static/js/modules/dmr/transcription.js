@@ -333,6 +333,7 @@ export function initLogTranscriptionTooltip() {
 
   // Close on click outside
   document.addEventListener("click", (e) => {
+    if (!e.target || typeof e.target.closest !== "function") return;
     if (!e.target.closest("#logTranscriptionPopover, .log-text-marker, .station-flag.has-transcription")) {
       hideLogTranscriptionPopover(true);
     }
@@ -340,6 +341,7 @@ export function initLogTranscriptionTooltip() {
 
   // Close on tap outside on mobile
   document.addEventListener("touchstart", (e) => {
+    if (!e.target || typeof e.target.closest !== "function") return;
     if (!e.target.closest("#logTranscriptionPopover, .log-text-marker, .station-flag.has-transcription")) {
       hideLogTranscriptionPopover(true);
     }

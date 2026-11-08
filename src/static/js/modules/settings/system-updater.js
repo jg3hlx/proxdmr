@@ -255,11 +255,17 @@ export function initSystemUpdater() {
 
   // Background check on boot after 2.5s
   setTimeout(() => {
+    if (window.isDemoMode || (typeof document !== "undefined" && document.body && document.body.classList.contains("is-demo-mode"))) {
+      return;
+    }
     checkUpdates(false);
   }, 2500);
 }
 
 export async function checkUpdates(manual = false) {
+  if (!manual && (window.isDemoMode || (typeof document !== "undefined" && document.body && document.body.classList.contains("is-demo-mode")))) {
+    return;
+  }
   const btnManualCheck = document.getElementById("btnCheckUpdateManual");
   const checkStatusText = document.getElementById("systemCheckStatusText");
   const btnIcon = document.getElementById("btnCheckUpdateIcon");
@@ -285,14 +291,16 @@ export async function checkUpdates(manual = false) {
     } else {
       if (manual && checkStatusText) {
         checkStatusText.style.color = "#f85149";
-        checkStatusText.textContent = `Ошибка проверки: ${data.message || "Сбой соединения"}`;
+        const errTitle = window.t ? window.t("updates.check_error", {}, "Ошибка проверки") : "Ошибка проверки";
+        checkStatusText.textContent = `${errTitle}: ${data.message || "Error"}`;
       }
     }
   } catch (err) {
     console.warn("[UPDATER] Update check failed:", err);
     if (manual && checkStatusText) {
       checkStatusText.style.color = "#f85149";
-      checkStatusText.textContent = `Ошибка: ${err.message}`;
+      const errTitle = window.t ? window.t("common.error", {}, "Ошибка") : "Ошибка";
+      checkStatusText.textContent = `${errTitle}: ${err.message}`;
     }
   } finally {
     if (manual && btnManualCheck) {
@@ -304,6 +312,14 @@ export async function checkUpdates(manual = false) {
 }
 
 function renderUpdateStatus(data, manual = false) {
+  const isDemo = Boolean(window.isDemoMode || (typeof document !== "undefined" && document.body && document.body.classList.contains("is-demo-mode")) || (data && data.is_demo));
+  if (isDemo) {
+    const banner = document.getElementById("systemUpdateBanner");
+    const badgeHeader = document.getElementById("systemUpdateBadgeHeader");
+    if (banner) banner.style.display = "none";
+    if (badgeHeader) badgeHeader.style.display = "none";
+    return;
+  }
   const badgeHeader = document.getElementById("systemUpdateBadgeHeader");
   const statusPill = document.getElementById("systemUpdateStatusPill");
   const currentVerLabel = document.getElementById("systemCurrentVerLabel");
@@ -331,16 +347,18 @@ function renderUpdateStatus(data, manual = false) {
     if (statusPill) {
       statusPill.style.background = "rgba(231, 76, 60, 0.18)";
       statusPill.style.color = "#ff7675";
-      statusPill.textContent = `⚡ Доступна v${data.latest_version}`;
+      const availStr = window.t ? window.t("updates.available_ver", { ver: data.latest_version }, `⚡ Доступна v${data.latest_version}`) : `⚡ Доступна v${data.latest_version}`;
+      statusPill.textContent = availStr;
     }
     if (availableBlock) availableBlock.style.display = "block";
-    if (newVerLabel) newVerLabel.textContent = `Доступна v${data.latest_version}`;
+    if (newVerLabel) newVerLabel.textContent = availStr;
     if (newDateLabel && data.release_date) newDateLabel.textContent = `(${data.release_date})`;
 
     if (manual && checkStatusText) {
       checkStatusText.style.color = "#ff7675";
-      checkStatusText.textContent = `Найдено обновление: v${data.latest_version}`;
-      showToast(`🚀 Найдено обновление ProxDMR: v${data.latest_version}`, 3500);
+      const foundMsg = window.t ? window.t("updates.found_ver", { ver: data.latest_version }, `Найдено обновление: v${data.latest_version}`) : `Найдено обновление: v${data.latest_version}`;
+      checkStatusText.textContent = foundMsg;
+      showToast(`🚀 ${foundMsg}`, 3500);
     }
 
     // Mini Banner Logic:
@@ -378,9 +396,10 @@ function renderUpdateStatus(data, manual = false) {
     if (manual) {
       if (checkStatusText) {
         checkStatusText.style.color = "#2ecc71";
-        checkStatusText.textContent = "✓ У вас самая последняя версия";
+        const latestMsg = window.t ? window.t("updates.already_latest", {}, "✓ У вас самая последняя версия") : "✓ У вас самая последняя версия";
+        checkStatusText.textContent = latestMsg;
       }
-      showToast("✓ У вас установлена актуальная версия ProxDMR", 2500);
+      showToast(latestMsg, 2500);
     }
   }
 }
@@ -475,15 +494,21 @@ function showUpdatingOverlay(version) {
     document.body.appendChild(overlay);
   }
 
+  const instTitle = window.t ? window.t("updates.installing_title", { ver: version }, `Установка обновления ProxDMR v${version}`) : `Установка обновления ProxDMR v${version}`;
+  const instDesc = window.t ? window.t("updates.installing_desc", {}, "Скачивание исходных кодов с GitHub, создание резервной копии и перезапуск сервера... Пожалуйста, подождите.") : "Скачивание исходных кодов с GitHub, создание резервной копии и перезапуск сервера... Пожалуйста, подождите.";
+  const instRestart = window.t ? window.t("updates.restarting_server", {}, "Перезапуск сервера...") : "Перезапуск сервера...";
+
   overlay.innerHTML = `
     <div style="background:#161b22;border:1px solid #30363d;padding:28px 24px;border-radius: 0px;max-width:420px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,0.8);">
-      <div style="font-size:2.8rem;margin-bottom:14px;animation:spin 2s linear infinite;">🔄</div>
-      <h3 style="margin:0 0 10px;font-size:1.2rem;color:#58a6ff;">Установка обновления ProxDMR v${version}</h3>
+      <div style="display:flex;align-items:center;justify-content:center;margin-bottom:18px;">
+        <img src="/static/img/loading-dots.webp" alt="..." style="width:52px;height:auto;object-fit:contain;pointer-events:none;" />
+      </div>
+      <h3 style="margin:0 0 10px;font-size:1.2rem;color:#58a6ff;">${escapeHtml(instTitle)}</h3>
       <p style="font-size:0.88rem;color:#8b949e;line-height:1.5;margin-bottom:16px;">
-        Скачивание исходных кодов с GitHub, создание резервной копии и перезапуск сервера... Пожалуйста, подождите.
+        ${escapeHtml(instDesc)}
       </p>
       <div id="systemUpdateProgressDots" style="font-size:0.82rem;color:#a4b0be;font-family:monospace;">
-        Перезапуск сервера...
+        ${escapeHtml(instRestart)}
       </div>
     </div>
   `;
@@ -506,7 +531,7 @@ function pollServerRebootAndReload() {
       if (resp.ok) {
         clearInterval(interval);
         const dots = document.getElementById("systemUpdateProgressDots");
-        if (dots) dots.textContent = "✓ Сервер запущен! Перезагрузка страницы...";
+        if (dots) dots.textContent = window.t ? window.t("updates.server_started_reloading", {}, "✓ Сервер запущен! Перезагрузка страницы...") : "✓ Сервер запущен! Перезагрузка страницы...";
         setTimeout(() => {
           window.location.reload();
         }, 1200);
@@ -514,13 +539,15 @@ function pollServerRebootAndReload() {
     } catch (_) {
       // Server still rebooting...
       const dots = document.getElementById("systemUpdateProgressDots");
-      if (dots) dots.textContent = `Ожидание запуска сервера (${attempts}с)...`;
+      if (dots) dots.textContent = window.t ? window.t("updates.waiting_server_start", { sec: attempts }, `Ожидание запуска сервера (${attempts}с)...`) : `Ожидание запуска сервера (${attempts}с)...`;
     }
 
     if (attempts >= maxAttempts) {
       clearInterval(interval);
       const dots = document.getElementById("systemUpdateProgressDots");
-      if (dots) dots.innerHTML = `⚠️ Сервер перезапускается дольше обычного.<br><a href="/" style="color:#58a6ff;text-decoration:underline;">Нажмите сюда для перехода</a>`;
+      const slowMsg = window.t ? window.t("updates.reboot_taking_longer", {}, "⚠️ Сервер перезапускается дольше обычного.") : "⚠️ Сервер перезапускается дольше обычного.";
+      const clickHere = window.t ? window.t("updates.click_to_reload", {}, "Нажмите сюда для перехода") : "Нажмите сюда для перехода";
+      if (dots) dots.innerHTML = `${slowMsg}<br><a href="/" style="color:#58a6ff;text-decoration:underline;">${clickHere}</a>`;
     }
   }, 1200);
 }

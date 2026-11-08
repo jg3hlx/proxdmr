@@ -17,10 +17,10 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 
 COPY . .
 
-# Build and install embedded DSD-FME AMBE+2 vocoder (RX decoding & TX encoding)
+# Build and install embedded mbelib-neo AMBE+2 vocoder (RX decoding & TX encoding)
 RUN make -C src/c_vocoder clean && \
     make -C src/c_vocoder && \
-    cp src/c_vocoder/libambe_vocoder.so /usr/local/lib/ && \
+    cp src/c_vocoder/libmbe_neo_bridge.so /usr/local/lib/ && \
     ldconfig
 
 ENV PYTHONPATH=/app/src

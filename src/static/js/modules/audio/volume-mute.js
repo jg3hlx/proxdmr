@@ -5,9 +5,9 @@
  */
 
 import { showCenterHudToast, showToast } from "../core/toast.js";
-import { scheduleSyncClientSettings } from "../settings/sync.js";
+import { scheduleSyncClientSettings } from "../settings/sync.js?v=2.9.625";
 import { updateHotspotCardMuteUI, updateHotspotCardPanUI } from "./routing.js";
-import { renderHotspotsList, renderHotspotSelect, switchActiveHotspot } from "../dmr/hotspots.js?v=2.9.560";
+import { renderHotspotsList, renderHotspotSelect, switchActiveHotspot } from "../dmr/hotspots.js?v=2.9.628";
 
 let muteClickTimer = null;
 let lastMuteClickTime = 0;
@@ -237,12 +237,8 @@ export function setHotspotAudioMute(hid, muted) {
       ap.setHotspotMute("default", muted);
     }
   }
-  if (muted && ap && ap.resetHotspot) {
-    ap.resetHotspot(cid);
-    if (isPrimary) {
-      ap.resetHotspot("default");
-    }
-  }
+  // Muting is an audio gain ramp operation (gain -> 0.0), handled seamlessly by ap.setHotspotMute.
+  // We do NOT call ap.resetHotspot on mute so that other active hotspots and jitter buffers remain unaffected.
   if (window.ttsAudioQueueManager && typeof window.ttsAudioQueueManager.syncCurrentVolume === "function") {
     window.ttsAudioQueueManager.syncCurrentVolume();
   }
@@ -250,6 +246,99 @@ export function setHotspotAudioMute(hid, muted) {
     window.recordingsManager.syncVolumeWithHotspot();
   }
   updateHotspotVolumeAndMuteUI(cid);
+}
+
+export function isHotspotAudioBoosted(hid) {
+  const cid = resolveHotspotId(hid);
+  return localStorage.getItem(`proxdmr_boost_${cid}`) === "true";
+}
+
+export function setHotspotAudioBoost(hid, enabled) {
+  const cid = resolveHotspotId(hid);
+  const boolVal = Boolean(enabled);
+  localStorage.setItem(`proxdmr_boost_${cid}`, boolVal ? "true" : "false");
+  if (window.audioPlayer && typeof window.audioPlayer.setHotspotVolume === "function") {
+    const curVol = getHotspotVolume(cid);
+    window.audioPlayer.setHotspotVolume(cid, curVol / 100.0);
+  }
+  updateHotspotVolumeAndMuteUI(cid);
+}
+
+export function toggleHotspotAudioBoost(hid) {
+  const cid = resolveHotspotId(hid);
+  const nextVal = !isHotspotAudioBoosted(cid);
+  setHotspotAudioBoost(cid, nextVal);
+  const hsList = (Array.isArray(window.currentHotspots) ? window.currentHotspots : []);
+  const hsObj = hsList.find(h => resolveHotspotId(h.id) === cid) || null;
+  const hsName = hsObj ? (hsObj.name || hsObj.id) : (cid === "default" ? "Основной хотспот" : cid);
+
+  if (nextVal) {
+    if (window.showToast) window.showToast(`⚡ [${hsName}] Boost громкости ВКЛЮЧЕН`, 2500);
+    if (navigator.vibrate) { try { navigator.vibrate([40, 60, 40]); } catch (_) {} }
+  } else {
+    if (window.showToast) window.showToast(`[${hsName}] Boost громкости ВЫКЛЮЧЕН`, 2000);
+    if (navigator.vibrate) { try { navigator.vibrate(30); } catch (_) {} }
+  }
+}
+
+export function bindMuteButtonLongPress(btn, getCid) {
+  if (!btn || btn._hasBoostLongPress) return;
+  btn._hasBoostLongPress = true;
+
+  let pressTimer = null;
+  let isLongPressTriggered = false;
+  let startX = 0;
+  let startY = 0;
+
+  const startPress = (e) => {
+    isLongPressTriggered = false;
+    startX = e.clientX || (e.touches && e.touches[0] && e.touches[0].clientX) || 0;
+    startY = e.clientY || (e.touches && e.touches[0] && e.touches[0].clientY) || 0;
+    if (pressTimer) clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      isLongPressTriggered = true;
+      const cid = typeof getCid === "function" ? getCid() : getCid;
+      toggleHotspotAudioBoost(cid);
+    }, 700);
+  };
+
+  const cancelPress = () => {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  };
+
+  const movePress = (e) => {
+    if (!pressTimer) return;
+    const curX = e.clientX || (e.touches && e.touches[0] && e.touches[0].clientX) || 0;
+    const curY = e.clientY || (e.touches && e.touches[0] && e.touches[0].clientY) || 0;
+    if (Math.abs(curX - startX) > 10 || Math.abs(curY - startY) > 10) {
+      cancelPress();
+    }
+  };
+
+  btn.addEventListener("pointerdown", startPress);
+  btn.addEventListener("pointermove", movePress);
+  btn.addEventListener("pointerup", cancelPress);
+  btn.addEventListener("pointercancel", cancelPress);
+  btn.addEventListener("contextmenu", (e) => {
+    if (isLongPressTriggered) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
+
+  // Intercept click: if triggered by long press, prevent toggleMute from firing!
+  btn.addEventListener("click", (e) => {
+    if (isLongPressTriggered) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      isLongPressTriggered = false;
+    }
+  }, true);
 }
 
 export function toggleHotspotAudioMute(hid) {
@@ -939,9 +1028,13 @@ export const SVG_SPEAKER_MUTED = `<svg class="speaker-svg speaker-svg-muted" vie
 
 export function updateHotspotVolumeAndMuteUI(hid) {
   const targetCid = hid ? resolveHotspotId(hid) : null;
-  const cards = targetCid 
+  let cards = targetCid 
     ? document.querySelectorAll(`.radio-container[data-hotspot-id="${targetCid}"]`)
     : document.querySelectorAll(".radio-container");
+  if ((!cards || cards.length === 0) && (targetCid === "default" || targetCid === resolveHotspotId("default"))) {
+    const rc = document.getElementById("radioContainer");
+    if (rc) cards = [rc];
+  }
 
   const globalMuted = isGlobalAudioMuted();
   const pttMuted = isPttAudioMuted();
@@ -969,9 +1062,12 @@ export function updateHotspotVolumeAndMuteUI(hid) {
     if (slider) slider.style.setProperty("--vol-ratio", ratio.toFixed(3));
 
     const strip = card.querySelector(".vertical-volume-strip");
+    const isBoosted = isHotspotAudioBoosted(cid);
     if (strip) {
+      strip.classList.toggle("vol-boosted", isBoosted);
+      const boostNote = isBoosted ? " • ⚡ BOOST" : "";
       const syncNote = isSystemVolumeSyncEnabled() ? (window.t ? window.t("audio.vol_android_sync", {}, " • Привязано к системе Android") : " • Привязано к системе Android") : "";
-      strip.title = window.t ? window.t("audio.vol_speaker_title", { vol: curVol, sync: syncNote }, `Громкость динамика: ${curVol}% (0% - 100%)${syncNote}`) : `Громкость динамика: ${curVol}% (0% - 100%)${syncNote}`;
+      strip.title = window.t ? window.t("audio.vol_speaker_title", { vol: curVol, sync: `${boostNote}${syncNote}` }, `Громкость динамика: ${curVol}% (0% - 100%)${boostNote}${syncNote}`) : `Громкость динамика: ${curVol}% (0% - 100%)${boostNote}${syncNote}`;
     }
 
     if (muteBtn) {
@@ -1064,6 +1160,10 @@ export function initVolumeMute() {
   }
 
   if (volumeMuteToggle) {
+    bindMuteButtonLongPress(volumeMuteToggle, () => {
+      const card = volumeMuteToggle.closest(".radio-container");
+      return (card && card.dataset.hotspotId) || getActiveHotspotId() || "default";
+    });
     volumeMuteToggle.onclick = (e) => {
       const card = volumeMuteToggle.closest(".radio-container");
       const cid = (card && card.dataset.hotspotId) || getActiveHotspotId() || "default";
@@ -1223,6 +1323,15 @@ if (typeof window !== "undefined") {
     setHotspotVolumeSyncEnabled,
     isSystemVolumeSyncEnabled,
     setSystemVolumeSyncEnabled,
-    onSystemVolumeChanged
+    onSystemVolumeChanged,
+    isHotspotAudioBoosted,
+    setHotspotAudioBoost,
+    toggleHotspotAudioBoost,
+    bindMuteButtonLongPress
   });
+
+  window.isHotspotAudioBoosted = isHotspotAudioBoosted;
+  window.setHotspotAudioBoost = setHotspotAudioBoost;
+  window.toggleHotspotAudioBoost = toggleHotspotAudioBoost;
+  window.bindMuteButtonLongPress = bindMuteButtonLongPress;
 }

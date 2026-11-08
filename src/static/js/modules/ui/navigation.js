@@ -84,16 +84,6 @@
         }
       },
       {
-        id: "dsdfmeModal",
-        close: () => {
-          const m = document.getElementById("dsdfmeModal");
-          if (m) {
-            m.classList.remove("active");
-            m.style.display = "";
-          }
-        }
-      },
-      {
         id: "audioRxModal",
         close: () => {
           const m = document.getElementById("audioRxModal");
@@ -342,18 +332,6 @@
       } else {
         audioTxModalEl.classList.remove("active");
         audioTxModalEl.style.display = "";
-        if (!fromPopstate) notifyNavClosed();
-      }
-      return true;
-    }
-
-    const dsdfmeModalEl = document.getElementById("dsdfmeModal");
-    if (dsdfmeModalEl && (dsdfmeModalEl.classList.contains("active") || dsdfmeModalEl.style.display === "flex")) {
-      if (typeof window.closeDsdfmeModal === "function") {
-        window.closeDsdfmeModal();
-      } else {
-        dsdfmeModalEl.classList.remove("active");
-        dsdfmeModalEl.style.display = "";
         if (!fromPopstate) notifyNavClosed();
       }
       return true;

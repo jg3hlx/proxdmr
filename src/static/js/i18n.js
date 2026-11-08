@@ -22,7 +22,7 @@
   ];
 
   // Cache-busting version — bump when locales JSON changes
-  const LOCALES_VER = "2.9.557";
+  const LOCALES_VER = "2.9.628";
   const LOCALES_BASE = "/static/locales/";
   const FALLBACK_LANG = "en";
 
@@ -146,6 +146,13 @@
         if (!key) return;
         const val = this.t(key);
         if (val && val !== key) el.setAttribute("aria-label", val);
+      });
+
+      root.querySelectorAll("[data-i18n-label]").forEach(el => {
+        const key = el.getAttribute("data-i18n-label");
+        if (!key) return;
+        const val = this.t(key);
+        if (val && val !== key) el.setAttribute("label", val);
       });
 
       if (typeof root.querySelectorAll === "function") {

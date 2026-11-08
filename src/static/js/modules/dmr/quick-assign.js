@@ -249,7 +249,8 @@ function extractTgOrIdFromElement(target) {
         value: tg,
         name: getCleanTgDesc(tg, tgName, undefined, netType),
         element: tgEl,
-        hotspotId: hotspotId
+        hotspotId: hotspotId,
+        network_type: netType
       };
     }
   }
@@ -285,7 +286,8 @@ function extractTgOrIdFromElement(target) {
         callsign: callsign,
         name: [callsign, name].filter(Boolean).join(" "),
         element: idEl,
-        hotspotId: hotspotId
+        hotspotId: hotspotId,
+        network_type: netType
       };
     }
   }
@@ -1009,15 +1011,22 @@ function openDirectCallModal(target) {
     };
   }
 
+  let initialHid = resolveHotspotId(target.hotspotId || window.activeHotspotId || "default");
+  const sourceNet = ((target && (target.network_type || target.netType)) || getHotspotNetworkType(initialHid) || "bm").toLowerCase();
+
   const allHs = (Array.isArray(window.currentHotspots) && window.currentHotspots.length > 0)
     ? window.currentHotspots.filter(hs => !hs.hidden)
-    : [{ id: "default", name: "Основной хотспот", status: "ONLINE", callsign: "", dmr_id: "" }];
+    : [{ id: "default", name: "Основной хотспот", status: "ONLINE", callsign: "", dmr_id: "", network_type: sourceNet }];
 
-  // Filter out hotspots where auto_tg_bm is disabled
-  const eligibleHs = allHs.filter(hs => hs.auto_tg_bm !== false);
-  const hsList = eligibleHs.length > 0 ? eligibleHs : allHs;
+  // Directive call / channel transfer can ONLY be performed within the SAME network!
+  const sameNetHs = allHs.filter(hs => (hs.network_type || "bm").toLowerCase() === sourceNet);
 
-  let initialHid = resolveHotspotId(target.hotspotId || window.activeHotspotId || "default");
+  // Filter out hotspots where auto_tg_bm is disabled (if any same-network hotspots have it enabled)
+  const eligibleHs = sameNetHs.filter(hs => hs.auto_tg_bm !== false);
+  const hsList = sameNetHs.length > 0
+    ? (eligibleHs.length > 0 ? eligibleHs : sameNetHs)
+    : (allHs.filter(hs => hs.auto_tg_bm !== false).length > 0 ? allHs.filter(hs => hs.auto_tg_bm !== false) : allHs);
+
   if (!hsList.some(h => resolveHotspotId(h.id) === initialHid)) {
     initialHid = resolveHotspotId(hsList[0].id);
   }
@@ -1035,24 +1044,31 @@ function openDirectCallModal(target) {
 
     const netType = (hs.network_type || "bm").toLowerCase();
     const hasKey = Boolean(hs.bm_api_key && hs.bm_api_key.trim().length > 8);
-    const isBmOrCompatible = (netType === "bm" || netType === "tgif");
 
     let isOk = true;
     let reasonTitle = "";
     let reasonDesc = "";
 
-    if (!isBmOrCompatible) {
+    if (netType !== sourceNet) {
       isOk = false;
-      reasonTitle = (window.t ? window.t("direct_call.error_not_bm_title") : "Сеть не поддерживает API BrandMeister");
-      reasonDesc = (window.t ? window.t("direct_call.error_not_bm_desc") : `Хотспот работает в сети ${netType.toUpperCase()}. Создание чистого TS через API BM невозможно.`);
-    } else if (!hasKey) {
-      isOk = false;
-      reasonTitle = (window.t ? window.t("direct_call.error_no_bm_api_title") : "Не настроен API BrandMeister");
-      reasonDesc = (window.t ? window.t("direct_call.error_no_bm_api_desc") : "У выбранного хотспота не указан API-ключ в настройках. Очистка таймслота невозможна, переход отменён.");
-    } else if (hs._apiStatus && hs._apiStatus !== "ONLINE" && hs._apiStatus !== "CHECKING") {
-      isOk = false;
-      reasonTitle = (window.t ? window.t("direct_call.error_bm_api_offline_title") : "API BrandMeister недоступен");
-      reasonDesc = (window.t ? window.t("direct_call.error_bm_api_offline_desc") : `Статус API: ${hs._apiStatus} (${hs._apiDetail || "Нет связи"}). Очистка таймслота невозможна.`);
+      reasonTitle = (window.t ? window.t("direct_call.error_not_bm_title") : "Несовпадение сетей");
+      reasonDesc = `Выбранный хотспот находится в сети ${netType.toUpperCase()}, а источник вызова — в ${sourceNet.toUpperCase()}. Перевод возможен только внутри одной сети.`;
+    } else if (netType === "bm") {
+      if (!hasKey) {
+        isOk = false;
+        reasonTitle = (window.t ? window.t("direct_call.error_no_bm_api_title") : "Не настроен API BrandMeister");
+        reasonDesc = (window.t ? window.t("direct_call.error_no_bm_api_desc") : "У выбранного хотспота не указан API-ключ в настройках. Очистка таймслота невозможна, переход отменён.");
+      } else if (hs._apiStatus && hs._apiStatus !== "ONLINE" && hs._apiStatus !== "CHECKING") {
+        isOk = false;
+        reasonTitle = (window.t ? window.t("direct_call.error_bm_api_offline_title") : "API BrandMeister недоступен");
+        reasonDesc = (window.t ? window.t("direct_call.error_bm_api_offline_desc") : `Статус API: ${hs._apiStatus} (${hs._apiDetail || "Нет связи"}). Очистка таймслота невозможна.`);
+      }
+    } else if (netType === "tgif") {
+      if (!hasKey) {
+        isOk = false;
+        reasonTitle = (window.t ? window.t("direct_call.error_not_bm_title") : "Не настроен API TGIF");
+        reasonDesc = "У выбранного хотспота TGIF не указан API-ключ в настройках.";
+      }
     }
 
     if (errorBanner) {
@@ -3468,9 +3484,19 @@ async function handleQuickAssignSelect(targetHid, targetSlot, targetTg, hotspotN
   if (typeof closeCallIdModal === "function") closeCallIdModal();
   if (typeof closeBmInfoModal === "function") closeBmInfoModal();
 
-  // Защита: если целевой хотспот сети BM не имеет ключа API, прервать ДО закрытия других хотспотов!
+  // Защита: если целевой хотспот сети BM не имеет ключа API или сети не совпадают, прервать ДО закрытия других хотспотов!
   const targetHsCheck = (Array.isArray(window.currentHotspots) && window.currentHotspots.find(h => resolveHotspotId(h.id) === resolvedTargetHid)) || null;
   const targetNetType = (targetHsCheck?.network_type || "bm").toLowerCase();
+  const sourceNetType = getHotspotNetworkType(sourceHid);
+
+  if (sourceNetType !== targetNetType) {
+    console.warn(`[QUICK_ASSIGN] Aborted direct transfer: network mismatch (${sourceNetType} !== ${targetNetType})`);
+    if (typeof showToast === "function") {
+      showToast(`❌ Невозможно перевести вызов: несовпадение сетей (${sourceNetType.toUpperCase()} → ${targetNetType.toUpperCase()})`, 3500);
+    }
+    return;
+  }
+
   if ((targetNetType === "bm" || targetNetType === "tgif") && (!targetHsCheck?.bm_api_key || targetHsCheck.bm_api_key.trim().length <= 8)) {
     console.warn(`[QUICK_ASSIGN] Aborted direct transfer to ${resolvedTargetHid}: missing BM API key`);
     return;
@@ -3794,6 +3820,7 @@ async function handleQuickAssignSelect(targetHid, targetSlot, targetTg, hotspotN
 // Delegated long-press listener on ID / TG elements and Memory buttons M1-M5
 document.addEventListener("pointerdown", (e) => {
   if (e.button !== undefined && e.button !== 0) return;
+  if (!e.target || typeof e.target.closest !== "function") return;
 
   // 1. Direct Long-Press on M1-M5 Memory Button (.btn-card-mem):
   // Automatically saves the card's active PTT target into the memory slot without opening modal
